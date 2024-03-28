@@ -8,6 +8,8 @@ use tokio::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+const LOG_DIR: &'static str = "logs/";
+
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().unwrap();
@@ -50,7 +52,7 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: &str, auth_tok
         } else {
             log_to_dyn_file(
                 "Invalid authentication",
-                Some("logs/"),
+                Some(LOG_DIR),
                 "invalid_ips.log")
                 .unwrap();
             eprintln!("Invalid authentication token. Ignoring request.");
@@ -84,7 +86,7 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: &str, auth_tok
         let log_str = format!("New IP {ip} was written into config file. Old: {existing_ip}");
 
         log(&log_str);
-        log_to_dyn_file(&log_str, Some("logs/"), "changed_ips.log").unwrap();
+        log_to_dyn_file(&log_str, Some(LOG_DIR), "changed_ips.log").unwrap();
 
         response = format!("200 OK: New IP {ip} was written into config file. Old: {existing_ip}");
     } else {
@@ -107,7 +109,7 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: &str, auth_tok
                 .spawn() {
                 log_to_dyn_file(
                     &format!("Error: {err}"),
-                    Some("logs/"),
+                    Some(LOG_DIR),
                     "post_ip_errs.log",
                 ).unwrap();
             }
@@ -117,7 +119,7 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: &str, auth_tok
     // Respond to the client
     if let Err(err) = socket.write_all(format!("{response}").as_bytes()).await {
         let err = format!("Failed to respond to client: {}", err);
-        log_to_dyn_file(&err, Some("logs/"), "err_res.log").unwrap();
+        log_to_dyn_file(&err, Some(LOG_DIR), "err_res.log").unwrap();
         eprintln!("{err}");
     }
 }
