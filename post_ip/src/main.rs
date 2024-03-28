@@ -32,10 +32,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    let session_id = match perform_request(&client, &login_payload).await {
-        Ok(response) => { response }
-        Err(e) => { panic!("{e}") }
-    };
+    let session_id =  perform_request(&client, &login_payload).await?;
 
     let session_id = session_id["responsedata"]["apisessionid"].as_str();
 
