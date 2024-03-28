@@ -8,7 +8,7 @@ const BASE_URL: &'static str = "https://ccp.netcup.net/run/webservice/servers/en
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     dotenv::dotenv().unwrap();
-    let args: Vec<String> = args().collect();
+    let args: Vec<_> = args().collect();
     assert_eq!(args.len(), 2);
 
     let client = Client::new();
@@ -85,4 +85,3 @@ async fn perform_request(client: &Client, payload: &Value) -> Result<Value, reqw
 
     response.json().await
 }
-
