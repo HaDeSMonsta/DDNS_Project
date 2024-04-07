@@ -47,7 +47,7 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: String, auth_t
                     ip_addr
                 }
                 Err(e) => {
-                    eprintln!("Failed to get clients IP: {e}");
+                    log_string(format!("Failed to get clients IP: {e}"));
                     return;
                 }
             }
@@ -57,7 +57,10 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: String, auth_t
                 Some(LOG_DIR),
                 "invalid_ips.log")
                 .unwrap();
-            eprintln!("Invalid authentication token. Ignoring request.");
+            log("Invalid authentication token. Ignoring request.");
+            if let Ok(invalid_caller_ip) = socket.peer_addr() {
+                log_string(format!("Invalid call was from {invalid_caller_ip}"))
+            }
             return;
         }
     }
