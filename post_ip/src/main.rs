@@ -1,4 +1,6 @@
-use std::{env, env::args, error::Error};
+use std::{env, error::Error};
+use std::fs::OpenOptions;
+use std::io::{BufRead, BufReader};
 
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -8,18 +10,16 @@ const BASE_URL: &'static str = "https://ccp.netcup.net/run/webservice/servers/en
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     dotenv::dotenv().unwrap();
-    let args: Vec<_> = args().collect();
-    assert_eq!(args.len(), 2);
 
     let client = Client::new();
+    let ip_conf_path = env::var("IP_CONFIG_PATH").unwrap();
 
     let api_key = env::var("API_KEY").unwrap();
     let api_pw = env::var("API_PW").unwrap();
     let cus_id = env::var("CUS_ID").unwrap();
     let domain_name = env::var("DOMAIN_NAME").unwrap();
     let cli_id = String::new();
-    let new_ip = &args[1];
-    let new_ip = new_ip.trim();
+    let new_ip = get_ip(ip_conf_path);
     let star_id = env::var("STAR_ID").unwrap();
     let at_id = env::var("AT_ID").unwrap();
 
@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    let session_id =  perform_request(&client, &login_payload).await?;
+    let session_id = perform_request(&client, &login_payload).await?;
 
     let session_id = session_id["responsedata"]["apisessionid"].as_str();
 
@@ -84,4 +84,16 @@ async fn perform_request(client: &Client, payload: &Value) -> Result<Value, reqw
                          .await?;
 
     response.json().await
+}
+
+fn get_ip(path: String) -> String {
+    let file = OpenOptions::new()
+        .read(true)
+        .open(path)
+        .unwrap();
+
+    let mut reader = BufReader::new(file);
+    let mut ip = String::new();
+    reader.read_line(&mut ip).unwrap();
+    String::from(ip.trim())
 }

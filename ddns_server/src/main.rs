@@ -13,21 +13,23 @@ const LOG_DIR: &'static str = "logs/";
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().unwrap();
-    let port = env::var("PORT").expect("PORT must be set");
+    let port = env::var("PORT").unwrap();
     let port: u16 = port.parse().expect("PORT must be a valid u16");
     let listen_address = format!("0.0.0.0:{port}");
-    let ip_conf_path = "ip.conf";
-    let auth = env::var("AUTH").expect("AUTH must be set");
+    let ip_conf_path = env::var("IP_CONF_PATH").unwrap();
+    let auth = env::var("AUTH").unwrap();
 
     let listener = TcpListener::bind(&listen_address).await.unwrap();
     log_string(format!("Server listening on {}", listen_address));
 
-    while let Ok((socket, _)) = listener.accept().await {
-        tokio::spawn(handle_connection(socket, ip_conf_path, auth.parse().unwrap()));
+    loop {
+        if let Ok((socket, _)) = listener.accept().await {
+            tokio::spawn(handle_connection(socket, ip_conf_path.clone(), auth.clone()));
+        }
     }
 }
 
-async fn handle_connection(mut socket: TcpStream, ip_config_path: &str, auth_token: String) {
+async fn handle_connection(mut socket: TcpStream, ip_config_path: String, auth_token: String) {
     let mut buffer = [0; 1024];
     let mut ip = String::new();
 
@@ -76,7 +78,7 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: &str, auth_tok
             .create(true)
             .truncate(true)
             .write(true)
-            .open(ip_config_path)
+            .open(&ip_config_path)
             .unwrap();
 
         let mut writer = BufWriter::new(file);
