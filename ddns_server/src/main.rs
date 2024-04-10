@@ -18,6 +18,11 @@ async fn main() {
     let listen_address = format!("0.0.0.0:{port}");
     let ip_conf_path = env::var("IP_CONF_PATH").unwrap();
     let auth = env::var("AUTH").unwrap();
+    
+    match env::var("POST_IP_PATH") {
+        Ok(p) => log_string(format!("Post IP path set: {p}")),
+        Err(_) => log("Post IP path not set"),
+    }
 
     let listener = TcpListener::bind(&listen_address).await.unwrap();
     log_string(format!("Server listening on {}", listen_address));
