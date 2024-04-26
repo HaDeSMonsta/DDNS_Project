@@ -12,7 +12,7 @@ const LOG_DIR: &'static str = "logs/";
 
 #[tokio::main]
 async fn main() {
-    dotenv::dotenv().unwrap();
+    dotenv::dotenv().expect("No .env file found");
     let port = env::var("PORT").unwrap();
     let port: u16 = port.parse().expect("PORT must be a valid u16");
     let listen_address = format!("0.0.0.0:{port}");
@@ -69,9 +69,6 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: String, auth_t
             return;
         }
     }
-    let ip_addr = socket.peer_addr().unwrap();
-    let temp = format!("Raw request IP (with valid auth): {ip_addr}");
-    log_to_dyn_file(&temp, Some(LOG_DIR), "temp_dbg.log").unwrap(/*)*/;
 
     // Read the existing IP from the configuration file
     let existing_ip = fs::read_to_string(&ip_config_path)
@@ -83,6 +80,9 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: String, auth_t
 
     // Compare current and existing IPs, extract the existing IP to compare
     if ip != existing_ip {
+        let ip_addr = socket.peer_addr().unwrap();
+        let temp = format!("Raw request IP (with valid auth): {ip_addr}");
+        log_to_dyn_file(&temp, Some(LOG_DIR), "temp_dbg.log").unwrap();
 
         // Update the configuration file
         let file = OpenOptions::new()

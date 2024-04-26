@@ -70,6 +70,7 @@
   </component>
   <component name="RunAnythingCache">
     <option name="myCommands">
+      <command value="cargo build" />
       <command value="cargo build --release" />
     </option>
   </component>
