@@ -18,7 +18,7 @@ async fn main() {
     let listen_address = format!("0.0.0.0:{port}");
     let ip_conf_path = env::var("IP_CONF_PATH").unwrap();
     let auth = env::var("AUTH").unwrap();
-    
+
     match env::var("POST_IP_PATH") {
         Ok(p) => log_string(format!("Post IP path set: {p}")),
         Err(_) => log("Post IP path not set"),
@@ -69,6 +69,9 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: String, auth_t
             return;
         }
     }
+    let ip_addr = socket.peer_addr().unwrap();
+    let temp = format!("Raw request IP (with valid auth): {ip_addr}");
+    log_to_dyn_file(&temp, Some(LOG_DIR), "temp_dbg.log").unwrap(/*)*/;
 
     // Read the existing IP from the configuration file
     let existing_ip = fs::read_to_string(&ip_config_path)

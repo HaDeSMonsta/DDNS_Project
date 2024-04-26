@@ -8,13 +8,8 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="cb862a00-f9e9-451c-9c07-a08bd577950c" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/../ddns_client/.idea/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/../ddns_client/.idea/ddns_client.iml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/../ddns_client/.idea/modules.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/../ddns_client/.idea/vcs.xml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/.gitignore" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/ddns_server.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/ddns_server.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/modules.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../ddns_client/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/../ddns_client/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -25,6 +20,18 @@
   <component name="Git.Settings">
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$/.." />
   </component>
+  <component name="GitHubPullRequestSearchHistory"><![CDATA[{
+  "lastFilter": {
+    "state": "OPEN",
+    "assignee": "HaDeSMonsta"
+  }
+}]]></component>
+  <component name="GithubPullRequestsUISettings"><![CDATA[{
+  "selectedUrlAndAccountId": {
+    "url": "git@github.com:HaDeSMonsta/DDNS_Project.git",
+    "accountId": "541be1b4-d2d0-4eaa-a1a2-b70bc975022e"
+  }
+}]]></component>
   <component name="MacroExpansionManager">
     <option name="directoryName" value="kkkj67kv" />
   </component>
@@ -123,6 +130,8 @@
         <item itemvalue="Cargo.build" />
         <item itemvalue="Cargo.build" />
         <item itemvalue="Cargo.build" />
+        <item itemvalue="Cargo.build" />
+        <item itemvalue="Cargo.build" />
       </list>
     </recent_temporary>
   </component>
@@ -140,6 +149,8 @@
       <workItem from="1712762948072" duration="732000" />
       <workItem from="1712764172167" duration="106000" />
       <workItem from="1712764285968" duration="18000" />
+      <workItem from="1713394297149" duration="102000" />
+      <workItem from="1714125410997" duration="526000" />
     </task>
     <servers />
   </component>
