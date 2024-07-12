@@ -13,19 +13,21 @@ const LOG_DIR: &'static str = "logs/";
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().expect("No .env file found");
-    let port = env::var("PORT").unwrap();
-    let port: u16 = port.parse().expect("PORT must be a valid u16");
+    let port = env::var("PORT")
+        .unwrap()
+        .parse::<u16>()
+        .expect("PORT must be a valid u16");
     let listen_address = format!("0.0.0.0:{port}");
     let ip_conf_path = env::var("IP_CONF_PATH").unwrap();
     let auth = env::var("AUTH").unwrap();
 
     match env::var("POST_IP_PATH") {
-        Ok(p) => log_string(format!("Post IP path set: {p}")),
+        Ok(p) => log(format!("Post IP path set: {p}")),
         Err(_) => log("Post IP path not set"),
     }
 
     let listener = TcpListener::bind(&listen_address).await.unwrap();
-    log_string(format!("Server listening on {}", listen_address));
+    log(format!("Server listening on {}", listen_address));
 
     loop {
         if let Ok((socket, _)) = listener.accept().await {
@@ -48,23 +50,23 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: String, auth_t
                 Ok(ip_addr) => {
                     // Remove Port
                     let ip_addr = ip_addr.to_string().split(":").next().unwrap().to_string();
-                    log_string(format!("Got client IP: {ip_addr}"));
+                    log(format!("Got client IP: {ip_addr}"));
                     ip_addr
                 }
                 Err(e) => {
-                    log_string(format!("Failed to get clients IP: {e}"));
+                    log(format!("Failed to get clients IP: {e}"));
                     return;
                 }
             }
         } else {
             log_to_dyn_file(
-                "Invalid authentication",
+                format!("Invalid authentication from {:?}", socket.peer_addr()),
                 Some(LOG_DIR),
                 "invalid_ips.log")
                 .unwrap();
             log("Invalid authentication token. Ignoring request.");
             if let Ok(invalid_caller_ip) = socket.peer_addr() {
-                log_string(format!("Invalid call was from {invalid_caller_ip}"))
+                log(format!("Invalid call was from {invalid_caller_ip}"))
             }
             return;
         }
@@ -78,11 +80,14 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: String, auth_t
 
     let response;
 
+    log_to_dyn_file(
+        format!("Raw request IP (with valid auth): {:?}", socket.peer_addr()),
+        Some(LOG_DIR),
+        "temp_dbg.log",
+    ).unwrap();
+
     // Compare current and existing IPs, extract the existing IP to compare
     if ip != existing_ip {
-        let ip_addr = socket.peer_addr().unwrap();
-        let temp = format!("Raw request IP (with valid auth): {ip_addr}");
-        log_to_dyn_file(&temp, Some(LOG_DIR), "temp_dbg.log").unwrap();
 
         // Update the configuration file
         let file = OpenOptions::new()
@@ -103,7 +108,7 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: String, auth_t
 
         response = format!("200 OK: New IP {ip} was written into config file. Old: {existing_ip}");
     } else {
-        log_string(format!("No change in IP: New {ip} == old {existing_ip}"));
+        log(format!("No change in IP: New {ip} == old {existing_ip}"));
         response = format!("200 OK: No Change in IP: New {ip} == old {existing_ip}")
     }
 
@@ -121,7 +126,7 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: String, auth_t
                 .arg(format!("{ip}"))
                 .spawn() {
                 log_to_dyn_file(
-                    &format!("Error: {err}"),
+                    format!("Error: {err}"),
                     Some(LOG_DIR),
                     "post_ip_errs.log",
                 ).unwrap();
