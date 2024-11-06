@@ -1,144 +1,207 @@
-use std::env;
+mod consts;
+
+use consts::*;
 use std::fs::OpenOptions;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, ErrorKind, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::process::Command;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Arc;
+use std::time::Instant;
+use std::{fs, thread};
 
 use logger_utc::*;
-use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tracing::{debug, info, warn, Level};
+use tracing_subscriber::FmtSubscriber;
 
-const LOG_DIR: &'static str = "logs/";
 
-#[tokio::main]
-async fn main() {
-    dotenv::dotenv().expect("No .env file found");
-    let port = env::var("PORT")
-        .unwrap()
-        .parse::<u16>()
-        .expect("PORT must be a valid u16");
-    let listen_address = format!("0.0.0.0:{port}");
-    let ip_conf_path = env::var("IP_CONF_PATH").unwrap();
-    let auth = env::var("AUTH").unwrap();
-
-    match env::var("POST_IP_PATH") {
-        Ok(p) => log(format!("Post IP path set: {p}")),
-        Err(_) => log("Post IP path not set"),
+fn main() {
+    {
+        #[cfg(debug_assertions)]
+        let level = Level::DEBUG;
+        #[cfg(not(debug_assertions))]
+        let level = Level::INFO;
+        tracing::subscriber::set_global_default(
+            FmtSubscriber::builder()
+                .with_max_level(level)
+                .finish()
+        ).expect("Setting global default subscriber failed");
     }
 
-    let listener = TcpListener::bind(&listen_address).await.unwrap();
-    log(format!("Server listening on {}", listen_address));
+    info!("Checking environment");
 
-    loop {
-        if let Ok((socket, _)) = listener.accept().await {
-            tokio::spawn(handle_connection(socket, ip_conf_path.clone(), auth.clone()));
+    dotenv::dotenv().expect("No .env file found");
+    let _ = *AUTH;
+    let _ = *IP_CONFIG_PATH;
+
+    match *POST_IP_PATH {
+        Some(ref p) => info!("Post IP path set: {p}"),
+        None => info!("Post IP path not set"),
+    }
+
+    let listen_address = format!("0.0.0.0:{}", *PORT);
+
+    let listener = TcpListener::bind(&listen_address)
+        .expect(&format!("Unable to bind {}", listen_address));
+    info!("Started server on {listen_address}");
+
+    let active_conns = Arc::new(AtomicU8::new(0));
+    info!("Accepting up to {MAX_CONCURRENT_CONNECTIONS} connections");
+
+    for stream in listener.incoming() {
+        let Ok(mut stream) = stream else {
+            warn!("Error accepting connection");
+            continue;
+        };
+
+        if active_conns.load(Ordering::SeqCst) >= MAX_CONCURRENT_CONNECTIONS {
+            debug!("Connection limit reached, rejecting");
+            continue;
         }
+        debug!(
+            "Accepting new connection (currently running: {}): {stream:?}",
+            active_conns.load(Ordering::SeqCst)
+        );
+        active_conns.fetch_add(1, Ordering::SeqCst);
+
+        let active_conns = active_conns.clone();
+        thread::spawn(move || {
+            handle_connection(&mut stream);
+            active_conns.fetch_sub(1, Ordering::SeqCst);
+            debug!("Connection closed: {stream:?}");
+        });
     }
 }
 
-async fn handle_connection(mut socket: TcpStream, ip_config_path: String, auth_token: String) {
-    let mut buffer = [0; 1024];
-    let mut ip = String::new();
-
-    // Read the IP address and authentication token from the incoming request
-    if let Ok(n) = socket.read(&mut buffer).await {
-        let request = String::from_utf8_lossy(&buffer[..n]);
-
-        if request.trim() == auth_token {
-            log("Valid authentication token");
-            ip = match socket.peer_addr() {
-                Ok(ip_addr) => {
-                    // Remove Port
-                    log(format!("Raw client ip: {ip_addr}"));
-                    let ip_addr = ip_addr.to_string().split(":").next().unwrap().to_string();
-                    log(format!("Got client IP: {ip_addr}"));
-                    ip_addr
-                }
-                Err(e) => {
-                    log(format!("Failed to get clients IP: {e}"));
-                    return;
-                }
-            }
-        } else {
-            log_to_dyn_file(
-                format!("Invalid authentication from {:?}", socket.peer_addr()),
-                Some(LOG_DIR),
-                "invalid_ips.log")
-                .unwrap();
-            log("Invalid authentication token. Ignoring request.");
-            if let Ok(invalid_caller_ip) = socket.peer_addr() {
-                log(format!("Invalid call was from {invalid_caller_ip}"))
-            }
+fn handle_connection(sock: &mut TcpStream) {
+    let start = Instant::now();
+    let max_run_secs = 5;
+    let auth_token = &*AUTH;
+    let ip_conf_path = &*IP_CONFIG_PATH;
+    let client_ip = match sock.peer_addr() {
+        Ok(addr) => {
+            let ip = addr.ip().to_string();
+            info!("Got client ip: {ip}");
+            ip
+        }
+        Err(e) => {
+            warn!("Unable to get client ({sock:?}) ip: {e}");
             return;
+        }
+    };
+
+    let Ok(_) = sock.set_nonblocking(true) else {
+        warn!("{client_ip}: Unable to set socket to non-blocking");
+        return;
+    };
+
+    let mut tmp_buf = [0; 1024];
+    let mut buf = vec![];
+
+    let auth;
+
+    'outer: loop {
+        if start.elapsed().as_secs() > max_run_secs {
+            debug!("{client_ip}: Client reached timeout");
+            return;
+        }
+
+        match sock.read(&mut tmp_buf) {
+            Ok(n) => {
+                debug!("{client_ip}: Read {n} bytes");
+                for byte in &tmp_buf[..n] {
+                    if *byte == b'\n' {
+                        auth = String::from_utf8_lossy(&buf).trim().to_string();
+                        debug!("{client_ip}: Reached end of msg for sock, auth: {auth}");
+                        break 'outer;
+                    }
+                    buf.push(*byte);
+                }
+            }
+            Err(ref e) if e.kind() == ErrorKind::WouldBlock => continue,
+            Err(e) => {
+                warn!("{client_ip}: Error reading from socket: {e}");
+                return;
+            }
         }
     }
 
-    // Read the existing IP from the configuration file
-    let existing_ip = fs::read_to_string(&ip_config_path)
-        .await
-        .unwrap_or(String::new());
-    let existing_ip = existing_ip.trim();
+    if auth != *auth_token {
+        warn!("{client_ip}: Invalid auth token")
+    }
+    info!("{client_ip}: Authenticated");
 
     let response;
 
-    log_to_dyn_file(
-        format!("Raw request IP (with valid auth): {:?}", socket.peer_addr()),
-        Some(LOG_DIR),
-        "temp_dbg.log",
-    ).unwrap();
+    {
+        debug!("{client_ip}: Locking IO");
+        let _lock = *IO_LOCK.lock().unwrap();
+        let Ok(existing_ip) = fs::read_to_string(&ip_conf_path) else {
+            warn!("{client_ip}: Unable to read ip from file {ip_conf_path}");
+            return;
+        };
+        let existing_ip = existing_ip.trim();
 
-    // Compare current and existing IPs, extract the existing IP to compare
-    if ip != existing_ip {
+        if client_ip != existing_ip {
+            let file = OpenOptions::new()
+                .create(true)
+                .truncate(true)
+                .write(true)
+                .open(&ip_conf_path)
+                .unwrap();
 
-        // Update the configuration file
-        let file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .open(&ip_config_path)
-            .unwrap();
+            let mut writer = BufWriter::new(file);
 
-        let mut writer = BufWriter::new(file);
+            match write!(writer, "{client_ip}") {
+                Ok(_) => {}
+                Err(e) => {
+                    warn!("{client_ip}: Unable to write ne ip into file, returning: {e}");
+                    return;
+                }
+            };
 
-        write!(writer, "{ip}").unwrap();
+            let log_str = format!("New IP {client_ip} was written into config file, old: {existing_ip}");
 
-        let log_str = format!("New IP {ip} was written into config file. Old: {existing_ip}");
+            info!("{client_ip}: {log_str}");
+            log_to_dyn_file(&log_str, Some(LOG_DIR), "changed_ips.log").unwrap();
 
-        log(&log_str);
-        log_to_dyn_file(&log_str, Some(LOG_DIR), "changed_ips.log").unwrap();
-
-        response = format!("200 OK: New IP {ip} was written into config file. Old: {existing_ip}");
-    } else {
-        log(format!("No change in IP: New {ip} == old {existing_ip}"));
-        response = format!("200 OK: No Change in IP: New {ip} == old {existing_ip}")
+            response = format!("New IP {client_ip} was written into config file. Old: {existing_ip}");
+        } else {
+            let log_str = format!("No Change in IP: New {client_ip} == old {existing_ip}");
+            info!("{client_ip}: {log_str}");
+            response = log_str;
+        }
+        debug!("{client_ip}: Unlocking IO");
     }
 
-    if let Ok(command) = env::var("POST_IP_PATH") {
-        std::thread::spawn(move || {
-            let mut command_dir = String::new();
-            let mut dirs: Vec<_> = command.split("/").collect();
-            dirs.remove(dirs.len() - 1);
-            for dir in dirs {
-                command_dir.push_str(dir);
-                command_dir.push('/');
+    let ip_clone = client_ip.clone();
+    let Some(command) = &*POST_IP_PATH else { return; };
+    let command = command.clone();
+    thread::spawn(move || {
+        let client_ip = ip_clone;
+        let mut cmd_dir = String::new();
+        let mut dirs = command.split("/")
+                              .collect::<Vec<_>>();
+        dirs.remove(dirs.len() - 1);
+        dirs.into_iter()
+            .for_each(|dir| cmd_dir.push_str(dir));
+        let mut child = match Command::new(command)
+            .current_dir(cmd_dir)
+            .spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                warn!("{client_ip}: Unable to start child: {e}");
+                return;
             }
-            if let Err(err) = Command::new(format!("{command}"))
-                .current_dir(format!("{command_dir}"))
-                .arg(format!("{ip}"))
-                .spawn() {
-                log_to_dyn_file(
-                    format!("Error: {err}"),
-                    Some(LOG_DIR),
-                    "post_ip_errs.log",
-                ).unwrap();
-            }
-        });
-    }
+        };
 
-    // Respond to the client
-    if let Err(err) = socket.write_all(format!("{response}").as_bytes()).await {
-        let err = format!("Failed to respond to client: {}", err);
-        log_to_dyn_file(&err, Some(LOG_DIR), "err_res.log").unwrap();
-        eprintln!("{err}");
+        match child.wait() {
+            Ok(code) => info!("{client_ip}: post_ip exited with {code}"),
+            Err(e) => warn!("{client_ip}: post_ip failed with: {e}"),
+        }
+    });
+
+    if let Err(err) = sock.write_all(format!("{response}\n").as_bytes()) {
+        warn!("{client_ip}: Unable to respond to client: {err}");
     }
 }
