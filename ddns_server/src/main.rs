@@ -49,6 +49,7 @@ async fn handle_connection(mut socket: TcpStream, ip_config_path: String, auth_t
             ip = match socket.peer_addr() {
                 Ok(ip_addr) => {
                     // Remove Port
+                    log(format!("Raw client ip: {ip_addr}"));
                     let ip_addr = ip_addr.to_string().split(":").next().unwrap().to_string();
                     log(format!("Got client IP: {ip_addr}"));
                     ip_addr
