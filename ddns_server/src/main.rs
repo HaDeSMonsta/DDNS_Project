@@ -55,7 +55,7 @@ fn main() {
         };
 
         if active_conns.load(Ordering::SeqCst) >= MAX_CONCURRENT_CONNECTIONS {
-            debug!("Connection limit reached, rejecting");
+            warn!("Connection limit reached, rejecting");
             continue;
         }
         debug!(
@@ -102,7 +102,7 @@ fn handle_connection(sock: &mut TcpStream) {
 
     'outer: loop {
         if start.elapsed().as_secs() > max_run_secs {
-            debug!("{client_ip}: Client reached timeout");
+            info!("{client_ip}: Client reached timeout");
             return;
         }
 
@@ -127,7 +127,8 @@ fn handle_connection(sock: &mut TcpStream) {
     }
 
     if auth != *auth_token {
-        warn!("{client_ip}: Invalid auth token")
+        warn!("{client_ip}: Invalid auth token");
+        return;
     }
     info!("{client_ip}: Authenticated");
 
@@ -185,12 +186,17 @@ fn handle_connection(sock: &mut TcpStream) {
         dirs.remove(dirs.len() - 1);
         dirs.into_iter()
             .for_each(|dir| cmd_dir.push_str(dir));
+        debug!(
+            "{client_ip}: Starting post_ip with {:?}", 
+            Command::new(command.clone())
+                .current_dir(cmd_dir.clone())
+        );
         let mut child = match Command::new(command)
             .current_dir(cmd_dir)
             .spawn() {
             Ok(child) => child,
             Err(e) => {
-                warn!("{client_ip}: Unable to start child: {e}");
+                warn!("{client_ip}: Unable to start post_ip: {e}");
                 return;
             }
         };
