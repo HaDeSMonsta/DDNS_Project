@@ -1,43 +1,79 @@
-use std::env;
-use std::time::Duration;
-use logger_utc::log;
-use logger_utc::log_string;
+use std::{env, thread};
+use std::io::{ErrorKind, Read, Write};
+use std::net::TcpStream;
+use std::time::{Duration, Instant};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tracing::{debug, info, Level};
+use tracing_subscriber::FmtSubscriber;
 
-#[tokio::main]
-async fn main() -> tokio::io::Result<()> {
-    let server_address = env::var("SERVER_ADDRESS").expect("SERVER_ADDRESS must be set");
-    let sleep_mins = env::var("SLEEP_MINS").unwrap_or(String::from("15"));
-    let sleep_mins: u64 = sleep_mins.parse().expect("SLEEP_MINS should be convertable to u64");
-    if sleep_mins == 0 { panic!("SLEEP_MINS must be > 0") }
+fn main() {
+    {
+        #[cfg(debug_assertions)]
+        let level = Level::DEBUG;
+        #[cfg(not(debug_assertions))]
+        let level = Level::INFO;
+        tracing::subscriber::set_global_default(
+            FmtSubscriber::builder()
+                .with_max_level(level)
+                .finish()
+        ).expect("Setting global default subscriber failed");
+    }
 
-    let auth = env::var("AUTH").expect("AUTH must be set");
-    log_string(format!("Address: {server_address}"));
+    info!("Checking environment");
+
+    let server_address = env::var("SERVER_ADDRESS")
+        .expect("SERVER_ADDRESS must be set");
+    let sleep_mins: u64 = env::var("SLEEP_MINS")
+        .unwrap_or(String::from("15"))
+        .parse()
+        .expect("SLEEP_MINS should be convertable to u64");
+    assert_ne!(sleep_mins, 0, "SLEEP_MINS must be > 0");
+
+    let auth = env::var("AUTH")
+        .expect("AUTH must be set");
+
+    info!("Target address: {server_address}");
 
     loop {
         {
-            let mut stream = TcpStream::connect(&server_address).await?;
+            info!("Connecting to server");
+            let mut stream = TcpStream::connect(&server_address)
+                .expect("Failed to connect to server");
+            stream.set_nonblocking(true)
+                  .expect("Failed to set non-blocking");
 
-            // Write the authentication token to the server
-            stream.write_all(auth.as_bytes()).await?;
+            debug!("Authenticating");
 
-            log("Sent identification to the server");
+            stream.write_all(format!("{auth}\n").as_bytes())
+                  .expect("Unable to write to server");
 
-            // Read response
-            let mut buffer = [0; 1024];
-            let n = stream.read(&mut buffer).await?;
-            if n == 0 {
-                // 0 bytes received => connection closed
-                log("Connection closed");
-            } else {
-                let response = String::from_utf8(buffer[0..n].to_vec())
-                    .expect("Failed to convert Server response bytes to String");
-                log_string(format!("Server response: {response}"));
+            let mut tmp_buf = [0; 1024];
+            let mut buffer = vec![];
+
+            let start = Instant::now();
+            'outer: loop {
+                if start.elapsed().as_secs() > 50 { panic!("Timeout"); }
+                match stream.read(&mut tmp_buf) {
+                    Ok(n) => {
+                        debug!("Read {n} bytes");
+
+                        for byte in &tmp_buf[..n] {
+                            if *byte == b'\n' {
+                                debug!("Reached end of response");
+                                break 'outer;
+                            }
+                            buffer.push(*byte);
+                        }
+                    }
+                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => continue,
+                    Err(e) => panic!("Failed to read from server: {e}"),
+                }
             }
+
+            let res = String::from_utf8_lossy(&buffer);
+            info!("Response from server: {res}");
         }
-        log_string(format!("Sleeping for {} seconds", sleep_mins * 60));
-        tokio::time::sleep(Duration::from_secs(sleep_mins * 60)).await;
+        info!("Sleeping for {sleep_mins} minutes");
+        thread::sleep(Duration::from_secs(sleep_mins * 60));
     }
 }
