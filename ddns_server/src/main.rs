@@ -133,6 +133,7 @@ fn handle_connection(sock: &mut TcpStream) {
     info!("{client_ip}: Authenticated");
 
     let response;
+    let ip_changed;
 
     {
         debug!("{client_ip}: Locking IO");
@@ -142,8 +143,9 @@ fn handle_connection(sock: &mut TcpStream) {
             return;
         };
         let existing_ip = existing_ip.trim();
+        ip_changed = client_ip != existing_ip;
 
-        if client_ip != existing_ip {
+        if ip_changed {
             let file = OpenOptions::new()
                 .create(true)
                 .truncate(true)
@@ -175,11 +177,17 @@ fn handle_connection(sock: &mut TcpStream) {
         debug!("{client_ip}: Unlocking IO");
     }
 
-    let ip_clone = client_ip.clone();
+    if let Err(err) = sock.write_all(format!("{response}\n").as_bytes()) {
+        warn!("{client_ip}: Unable to respond to client: {err}");
+    }
+
+    if !ip_changed {
+        return;
+    }
+
     let Some(command) = &*POST_IP_PATH else { return; };
     let command = command.clone();
     thread::spawn(move || {
-        let client_ip = ip_clone;
         let mut cmd_dir = String::new();
         let mut dirs = command.split("/")
                               .collect::<Vec<_>>();
@@ -191,8 +199,8 @@ fn handle_connection(sock: &mut TcpStream) {
             });
         debug!(
             "{client_ip}: Starting post_ip with {:?}", 
-            Command::new(command.clone())
-                .current_dir(cmd_dir.clone())
+            Command::new(&command)
+                .current_dir(&cmd_dir)
         );
         let mut child = match Command::new(command)
             .current_dir(cmd_dir)
@@ -209,8 +217,4 @@ fn handle_connection(sock: &mut TcpStream) {
             Err(e) => warn!("{client_ip}: post_ip failed with: {e}"),
         }
     });
-
-    if let Err(err) = sock.write_all(format!("{response}\n").as_bytes()) {
-        warn!("{client_ip}: Unable to respond to client: {err}");
-    }
 }
