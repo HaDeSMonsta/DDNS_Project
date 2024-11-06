@@ -185,7 +185,10 @@ fn handle_connection(sock: &mut TcpStream) {
                               .collect::<Vec<_>>();
         dirs.remove(dirs.len() - 1);
         dirs.into_iter()
-            .for_each(|dir| cmd_dir.push_str(dir));
+            .for_each(|dir| {
+                cmd_dir.push_str(dir);
+                cmd_dir.push_str("/");
+            });
         debug!(
             "{client_ip}: Starting post_ip with {:?}", 
             Command::new(command.clone())
