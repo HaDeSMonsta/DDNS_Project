@@ -90,7 +90,8 @@ fn handle_connection(sock: &mut TcpStream) {
         }
     };
 
-    /* This is using 100 % CPU of the assigned core, lets try to disable it
+    //* This is using 100 % CPU of the assigned core, lets try to disable it
+    // Ok, still the same problem, so what is causing it?
     let Ok(_) = sock.set_nonblocking(true) else {
         warn!("{client_ip}: Unable to set socket to non-blocking");
         return;
