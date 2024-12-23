@@ -90,10 +90,12 @@ fn handle_connection(sock: &mut TcpStream) {
         }
     };
 
+    /* This is using 100 % CPU of the assigned core, lets try to disable it
     let Ok(_) = sock.set_nonblocking(true) else {
         warn!("{client_ip}: Unable to set socket to non-blocking");
         return;
     };
+    // */
 
     let mut tmp_buf = [0; 1024];
     let mut buf = vec![];
@@ -198,7 +200,7 @@ fn handle_connection(sock: &mut TcpStream) {
                 cmd_dir.push_str("/");
             });
         debug!(
-            "{client_ip}: Starting post_ip with {:?}", 
+            "{client_ip}: Starting post_ip with {:?}",
             Command::new(&command)
                 .current_dir(&cmd_dir)
         );
