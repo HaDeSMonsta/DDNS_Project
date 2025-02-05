@@ -20,12 +20,13 @@ use tracing_subscriber::FmtSubscriber;
 
 // TODO Change logging, we probably shouldn't log every connection with info, just changes
 fn main() {
+    dotenv().expect("No .env file found");
     {
         const KEY: &str = "LOG_LEVEL";
         let level = env::var(KEY)
             .unwrap_or(DEFAULT_LOG_LEVEL_STR.to_string())
             .parse::<Level>()
-            .expect(&format!("{KEY} env var is set, but invalid: {}", env::var(KEY).unwrap()));
+            .expect(&format!("{KEY} env var is set, but invalid: {:?}", env::var(KEY)));
         tracing::subscriber::set_global_default(
             FmtSubscriber::builder()
                 .with_max_level(level)
@@ -35,7 +36,6 @@ fn main() {
 
     info!("Checking environment");
 
-    dotenv().expect("No .env file found");
     let _ = *AUTH;
     let _ = *IP_CONFIG_PATH;
 
