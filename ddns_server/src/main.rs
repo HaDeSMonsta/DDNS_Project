@@ -3,13 +3,13 @@ mod consts;
 use consts::*;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, ErrorKind, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Ipv4Addr, TcpListener, TcpStream};
 use std::process::Command;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
-use std::{fs, thread};
-
+use std::{env, fs, thread};
+use dotenv::dotenv;
 use logger_utc::*;
 use tracing::{debug, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -17,10 +17,11 @@ use tracing_subscriber::FmtSubscriber;
 
 fn main() {
     {
-        #[cfg(debug_assertions)]
-        let level = Level::DEBUG;
-        #[cfg(not(debug_assertions))]
-        let level = Level::INFO;
+        const KEY: &str = "LOG_LEVEL";
+        let level = env::var(KEY)
+            .unwrap_or(DEFAULT_LOG_LEVEL_STR.to_string())
+            .parse::<Level>()
+            .expect(&format!("{KEY} env var is set, but invalid: {}", env::var(KEY).unwrap()));
         tracing::subscriber::set_global_default(
             FmtSubscriber::builder()
                 .with_max_level(level)
@@ -30,7 +31,7 @@ fn main() {
 
     info!("Checking environment");
 
-    dotenv::dotenv().expect("No .env file found");
+    dotenv().expect("No .env file found");
     let _ = *AUTH;
     let _ = *IP_CONFIG_PATH;
 
@@ -39,7 +40,7 @@ fn main() {
         None => info!("Post IP path not set"),
     }
 
-    let listen_address = format!("0.0.0.0:{}", *PORT);
+    let listen_address = format!("{}:{}", Ipv4Addr::UNSPECIFIED, *PORT);
 
     let listener = TcpListener::bind(&listen_address)
         .expect(&format!("Unable to bind {}", listen_address));
