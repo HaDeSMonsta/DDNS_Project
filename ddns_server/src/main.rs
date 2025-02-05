@@ -1,6 +1,8 @@
 mod consts;
 
 use consts::*;
+use dotenv::dotenv;
+use logger_utc::*;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, ErrorKind, Read, Write};
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
@@ -9,12 +11,14 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{env, fs, thread};
-use dotenv::dotenv;
-use logger_utc::*;
 use tracing::{debug, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
+// Theory for failure: Panic when IP changes => No subtraction of arc
+// Solution, start another thread with logic and join it
+// If it panics we log the error, but continue
 
+// TODO Change logging, we probably shouldn't log every connection with info, just changes
 fn main() {
     {
         const KEY: &str = "LOG_LEVEL";
@@ -67,9 +71,15 @@ fn main() {
 
         let active_conns = active_conns.clone();
         thread::spawn(move || {
-            handle_connection(&mut stream);
+            let handle = thread::spawn(move || {
+                handle_connection(&mut stream);
+                debug!("Connection closed: {stream:?}");
+            });
+            match handle.join() {
+                Ok(_) => {}
+                Err(e) => warn!("Error joining thread: {e:?}"),
+            };
             active_conns.fetch_sub(1, Ordering::SeqCst);
-            debug!("Connection closed: {stream:?}");
         });
     }
 }
