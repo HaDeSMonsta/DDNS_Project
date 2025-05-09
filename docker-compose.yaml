@@ -1,0 +1,16 @@
+services:
+  ddns_server:
+    build:
+      context: ddns_server
+      # dockerfile: docker/default/debug/Dockerfile
+      # dockerfile: docker/default/release/Dockerfile
+      # dockerfile: docker/nc/debug/Dockerfile
+      dockerfile: docker/nc/release/Dockerfile
+    container_name: ddns_server
+    restart: unless-stopped
+    env_file:
+      - ddns_server/.env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./ip.conf:/config/ip.conf

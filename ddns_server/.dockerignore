@@ -1,0 +1,8 @@
+.idea/
+docker/
+.dockerignore
+*.env*
+.gitignore
+Cargo.lock
+ip.conf
+README.md

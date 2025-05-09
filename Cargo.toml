@@ -2,13 +2,8 @@
 resolver = "2"
 members = [
 	"ddns_*",
-	# "post_ip", # Openssl issue, use nix develop for this (Also technically more of a plugin)
-]
-exclude = [
-	"post_ip",
 ]
 
 [profile.release]
 lto = true
 codegen-units = 1
-

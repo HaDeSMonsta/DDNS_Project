@@ -1,234 +1,280 @@
-mod consts;
+mod macros;
 
-use consts::*;
-use dotenv::dotenv;
-use logger_utc::*;
-use std::fs::OpenOptions;
-use std::io::{BufWriter, ErrorKind, Read, Write};
-use std::net::{Ipv4Addr, TcpListener, TcpStream};
-use std::process::Command;
-use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Arc;
-use std::time::Instant;
-use std::{env, fs, thread};
-use tracing::{debug, info, warn, Level};
+#[cfg(feature = "post_netcup")]
+use anyhow::anyhow;
+use anyhow::{bail, Context, Result};
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::IntoResponse;
+use axum::routing::post;
+use axum::{Json, Router};
+use dotenvy::dotenv;
+#[cfg(feature = "post_netcup")]
+use reqwest::Client;
+use serde::Deserialize;
+#[cfg(feature = "post_netcup")]
+use serde_json::json;
+use std::env;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::process::exit;
+use std::sync::{Arc, LazyLock};
+use std::time::Duration;
+use tokio::fs;
+use tokio::net::TcpListener;
+use tokio::sync::Mutex;
+use tracing::{debug, error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
-// Theory for failure: Panic when IP changes => No subtraction of arc
-// Solution, start another thread with logic and join it
-// If it panics we log the error, but continue
+const FORWARDED_HEADER: &str = "x-forwarded-for";
+const IP_CONF_PATH: &str = "/config/ip.conf";
 
-// TODO Change logging, we probably shouldn't log every connection with info, just changes
-fn main() {
-    dotenv().expect("No .env file found");
+static AUTH: LazyLock<String> = LazyLock::new(|| get_env!("AUTH"));
+
+#[cfg(feature = "post_netcup")]
+const NC_URL: &str = "https://ccp.netcup.net/run/webservice/servers/endpoint.php?JSON";
+#[cfg(feature = "post_netcup")]
+static NC_API_KEY: LazyLock<String> = LazyLock::new(|| get_env!("NC_API_KEY"));
+#[cfg(feature = "post_netcup")]
+static NC_API_PW: LazyLock<String> = LazyLock::new(|| get_env!("NC_API_PW"));
+#[cfg(feature = "post_netcup")]
+static NC_CUS_ID: LazyLock<String> = LazyLock::new(|| get_env!("NC_CUS_ID"));
+#[cfg(feature = "post_netcup")]
+static NC_DOMAIN_NAME: LazyLock<String> = LazyLock::new(|| get_env!("NC_DOMAIN_NAME"));
+#[cfg(feature = "post_netcup")]
+static NC_STAR_ID: LazyLock<String> = LazyLock::new(|| get_env!("NC_STAR_ID"));
+#[cfg(feature = "post_netcup")]
+static NC_AT_ID: LazyLock<String> = LazyLock::new(|| get_env!("NC_AT_ID"));
+
+#[derive(Clone)]
+struct AppState {
+    rw_lock: Arc<Mutex<()>>,
+}
+
+#[derive(Deserialize)]
+struct IpPayload {
+    auth: String,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let _ = dotenv();
+
     {
         const KEY: &str = "LOG_LEVEL";
-        let level = env::var(KEY)
-            .unwrap_or(DEFAULT_LOG_LEVEL_STR.to_string())
-            .parse::<Level>()
-            .expect(&format!("{KEY} env var is set, but invalid: {:?}", env::var(KEY)));
-        tracing::subscriber::set_global_default(
-            FmtSubscriber::builder()
-                .with_max_level(level)
-                .finish()
-        ).expect("Setting global default subscriber failed");
+        #[cfg(debug_assertions)]
+        pub const DEFAULT_LOG_LEVEL: Level = Level::DEBUG;
+        #[cfg(not(debug_assertions))]
+        pub const DEFAULT_LOG_LEVEL: Level = Level::INFO;
+
+        let lvl = match env::var(KEY) {
+            Ok(lvl) => match lvl.parse() {
+                Ok(lvl) => lvl,
+                Err(e) => {
+                    eprintln!("WARNING: {KEY} is set, but the value {lvl} is invalid: {e}");
+                    exit(1);
+                }
+            },
+            Err(_) => DEFAULT_LOG_LEVEL,
+        };
+
+        let fmt_sub = FmtSubscriber::builder()
+            .with_max_level(lvl)
+            .finish();
+
+        tracing::subscriber::set_global_default(fmt_sub)
+            .with_context(|| format!("Failed to set subscriber with lvl {lvl}"))?;
     }
 
     info!("Checking environment");
 
     let _ = *AUTH;
-    let _ = *IP_CONFIG_PATH;
 
-    match *POST_IP_PATH {
-        Some(ref p) => info!("Post IP path set: {p}"),
-        None => info!("Post IP path not set"),
+    #[cfg(any(feature = "post_netcup"))]
+    info!("Post IP activated");
+    #[cfg(not(any(feature = "post_netcup")))]
+    info!("Post IP not activated");
+
+    match fs::try_exists(IP_CONF_PATH).await {
+        Ok(true) => debug!("IP Conf exists"),
+        Ok(false) => {
+            info!("{IP_CONF_PATH} does not exist, will create");
+            if let Err(e) = fs::File::create(IP_CONF_PATH).await {
+                error!("Unable to create {IP_CONF_PATH}: {e}");
+                exit(1);
+            };
+        }
+        Err(e) => {
+            error!("Can't check if {IP_CONF_PATH} exists: {e}");
+            exit(1);
+        }
     }
 
-    let listen_address = format!("{}:{}", Ipv4Addr::UNSPECIFIED, *PORT);
+    let port = get_env!("PORT", u16);
+    let listen_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
 
-    let listener = TcpListener::bind(&listen_address)
-        .expect(&format!("Unable to bind {}", listen_address));
-    info!("Started server on {listen_address}");
+    let state = AppState {
+        rw_lock: Arc::new(Mutex::new(())),
+    };
 
-    let active_conns = Arc::new(AtomicU8::new(0));
-    info!("Accepting up to {MAX_CONCURRENT_CONNECTIONS} connections");
+    let app = Router::new()
+        .route("/ip", post(post_ip))
+        .with_state(state);
 
-    for stream in listener.incoming() {
-        let Ok(mut stream) = stream else {
-            warn!("Error accepting connection");
-            continue;
-        };
+    let listener = TcpListener::bind(listen_address)
+        .await
+        .with_context(|| format!("Failed to bind port {port}"))?;
+    info!("Listening on {listen_address}");
 
-        if active_conns.load(Ordering::SeqCst) >= MAX_CONCURRENT_CONNECTIONS {
-            warn!("Connection limit reached, rejecting");
-            continue;
+    axum::serve(listener, app)
+        .await
+        .context("Unable to serve")?;
+
+    Ok(())
+}
+
+// Why tf does the order matter? If ConnectInfo/headers are below json, this won't compile
+async fn post_ip(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<IpPayload>,
+) -> impl IntoResponse {
+    if payload.auth != *AUTH {
+        warn!("Invalid password detected: {}", payload.auth);
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        return (StatusCode::FORBIDDEN, String::from("No entrance with that password"));
+    }
+
+    let client_ip = match headers.get(FORWARDED_HEADER) {
+        Some(ip) => ip,
+        None => {
+            let err = format!("{FORWARDED_HEADER} is not set");
+            error!("{err}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, err);
         }
-        debug!(
-            "Accepting new connection (currently running: {}): {stream:?}",
-            active_conns.load(Ordering::SeqCst)
-        );
-        active_conns.fetch_add(1, Ordering::SeqCst);
+    };
+    debug!(?client_ip);
 
-        let active_conns = active_conns.clone();
-        thread::spawn(move || {
-            let handle = thread::spawn(move || {
-                handle_connection(&mut stream);
-                debug!("Connection closed: {stream:?}");
-            });
-            match handle.join() {
-                Ok(_) => {}
-                Err(e) => warn!("Error joining thread: {e:?}"),
-            };
-            active_conns.fetch_sub(1, Ordering::SeqCst);
-        });
+    let _guard = state.rw_lock.lock().await;
+
+    let ip = match fs::read_to_string(IP_CONF_PATH).await {
+        Ok(ip) => ip,
+        Err(e) => {
+            error!("Can't read {IP_CONF_PATH}: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, String::from("Can't read existing IP"));
+        }
+    };
+    let ip = ip.trim();
+
+    if client_ip != ip {
+        debug!("Client IP ({client_ip:?}) == ip ({ip})");
+        return (StatusCode::OK, format!("No change in IP: {ip}"));
+    }
+
+    match fs::write(IP_CONF_PATH, &ip).await {
+        Ok(_) => debug!("Wrote new ip {ip} to {IP_CONF_PATH}"),
+        Err(e) => {
+            error!("Unable to write IP {ip} to file {IP_CONF_PATH}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Can't write new IP {ip} to file: {e}"),
+            );
+        }
+    };
+
+    #[cfg(not(feature = "post_netcup"))]
+    {
+        debug!("Post IP deactivated");
+        return (StatusCode::OK, format!("New IP ({ip}) written (no post_ip detected)"));
+    }
+
+    #[cfg(any(feature = "post_netcup"))]
+    match execute_ip_change(&ip).await {
+        Ok(_) => {
+            info!("Successfully posted new IP");
+            (StatusCode::OK, format!("New IP ({ip}) posted"))
+        }
+        Err(e) => {
+            error!("Post IP failed: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, String::from("Posting IP failed"))
+        }
     }
 }
 
-fn handle_connection(sock: &mut TcpStream) {
-    let start = Instant::now();
-    let max_run_secs = 5;
-    let auth_token = &*AUTH;
-    let ip_conf_path = &*IP_CONFIG_PATH;
-    let client_ip = match sock.peer_addr() {
-        Ok(addr) => {
-            let ip = addr.ip().to_string();
-            info!("Got client ip: {ip}");
-            ip
-        }
-        Err(e) => {
-            warn!("Unable to get client ({sock:?}) ip: {e}");
-            return;
-        }
-    };
-
-    //* This is using 100 % CPU of the assigned core, lets try to disable it
-    // Ok, still the same problem, so what is causing it?
-    let Ok(_) = sock.set_nonblocking(true) else {
-        warn!("{client_ip}: Unable to set socket to non-blocking");
-        return;
-    };
-    // */
-
-    let mut tmp_buf = [0; 1024];
-    let mut buf = vec![];
-
-    let auth;
-
-    'outer: loop {
-        if start.elapsed().as_secs() > max_run_secs {
-            info!("{client_ip}: Client reached timeout");
-            return;
-        }
-
-        match sock.read(&mut tmp_buf) {
-            Ok(n) => {
-                debug!("{client_ip}: Read {n} bytes");
-                for byte in &tmp_buf[..n] {
-                    if *byte == b'\n' {
-                        auth = String::from_utf8_lossy(&buf).trim().to_string();
-                        debug!("{client_ip}: Reached end of msg for sock, auth: {auth}");
-                        break 'outer;
-                    }
-                    buf.push(*byte);
-                }
-            }
-            Err(ref e) if e.kind() == ErrorKind::WouldBlock => continue,
-            Err(e) => {
-                warn!("{client_ip}: Error reading from socket: {e}");
-                return;
-            }
-        }
-    }
-
-    if auth != *auth_token {
-        warn!("{client_ip}: Invalid auth token");
-        return;
-    }
-    info!("{client_ip}: Authenticated");
-
-    let response;
-    let ip_changed;
-
-    {
-        debug!("{client_ip}: Locking IO");
-        let _lock = *IO_LOCK.lock().unwrap();
-        let Ok(existing_ip) = fs::read_to_string(&ip_conf_path) else {
-            warn!("{client_ip}: Unable to read ip from file {ip_conf_path}");
-            return;
-        };
-        let existing_ip = existing_ip.trim();
-        ip_changed = client_ip != existing_ip;
-
-        if ip_changed {
-            let file = OpenOptions::new()
-                .create(true)
-                .truncate(true)
-                .write(true)
-                .open(&ip_conf_path)
-                .unwrap();
-
-            let mut writer = BufWriter::new(file);
-
-            match write!(writer, "{client_ip}") {
-                Ok(_) => {}
-                Err(e) => {
-                    warn!("{client_ip}: Unable to write ne ip into file, returning: {e}");
-                    return;
-                }
-            };
-
-            let log_str = format!("New IP {client_ip} was written into config file, old: {existing_ip}");
-
-            info!("{client_ip}: {log_str}");
-            log_to_dyn_file(&log_str, Some(LOG_DIR), "changed_ips.log").unwrap();
-
-            response = format!("New IP {client_ip} was written into config file. Old: {existing_ip}");
-        } else {
-            let log_str = format!("No Change in IP: New {client_ip} == old {existing_ip}");
-            info!("{client_ip}: {log_str}");
-            response = log_str;
-        }
-        debug!("{client_ip}: Unlocking IO");
-    }
-
-    if let Err(err) = sock.write_all(format!("{response}\n").as_bytes()) {
-        warn!("{client_ip}: Unable to respond to client: {err}");
-    }
-
-    if !ip_changed {
-        return;
-    }
-
-    let Some(command) = &*POST_IP_PATH else { return; };
-    let command = command.clone();
-    thread::spawn(move || {
-        let mut cmd_dir = String::new();
-        let mut dirs = command.split("/")
-                              .collect::<Vec<_>>();
-        dirs.remove(dirs.len() - 1);
-        dirs.into_iter()
-            .for_each(|dir| {
-                cmd_dir.push_str(dir);
-                cmd_dir.push_str("/");
-            });
-        debug!(
-            "{client_ip}: Starting post_ip with {:?}",
-            Command::new(&command)
-                .current_dir(&cmd_dir)
-        );
-        let mut child = match Command::new(command)
-            .current_dir(cmd_dir)
-            .spawn() {
-            Ok(child) => child,
-            Err(e) => {
-                warn!("{client_ip}: Unable to start post_ip: {e}");
-                return;
-            }
-        };
-
-        match child.wait() {
-            Ok(code) => info!("{client_ip}: post_ip exited with {code}"),
-            Err(e) => warn!("{client_ip}: post_ip failed with: {e}"),
-        }
+#[cfg(feature = "post_netcup")]
+async fn execute_ip_change(ip: &str) -> Result<()> {
+    let client = Client::new();
+    let login_payload = json!({
+        "action": "login",
+        "param": {
+            "apikey": *NC_API_KEY,
+            "apipassword": *NC_API_PW,
+            "customernumber": *NC_CUS_ID,
+        },
     });
+
+    let session_id = client.post(NC_URL)
+                           .json(&login_payload)
+                           .send()
+                           .await
+                           .context("Unable to login")?
+        .json::<serde_json::Value>()
+        .await
+        .context("Unable to parse login response")?
+        ["responsedata"]
+        ["apisessionid"]
+        .as_str()
+        .ok_or(anyhow!("No session id available"))?
+        .to_string();
+
+    let dns_payload = json!({
+        "action": "updateDnsRecords",
+        "param": {
+            "customernumber": *NC_CUS_ID,
+            "apikey": *NC_API_KEY,
+            "apisessionid": session_id,
+            "clientrequestid": "",
+            "domainname": *NC_DOMAIN_NAME,
+            "dnsrecordset": {
+                "dnsrecords": [
+                    {
+                        "id": *NC_STAR_ID,
+                        "hostname": "*",
+                        "type": "A",
+                        "priority": "0",
+                        "destination": ip,
+                        "deleterecord": "FALSE",
+                        "state": "yes",
+                    },
+                    {
+                        "id": *NC_AT_ID,
+                        "hostname": "@",
+                        "type": "A",
+                        "priority": "0",
+                        "destination": ip,
+                        "deleterecord": "FALSE",
+                        "state": "yes",
+                    },
+                ],
+            },
+        },
+    });
+
+    let dns_response = client.post(NC_URL)
+                             .json(&dns_payload)
+                             .send()
+                             .await
+                             .context("Unable to update dns")?
+        .json::<serde_json::Value>()
+        .await
+        .context("Unable to parse dns response")?
+        ["shortmessage"]
+        .as_str()
+        .ok_or(anyhow!("No shortmessage in dns response"))?
+        .to_string();
+
+    if dns_response.trim() != "DNS records successful updated" {
+        bail!("Invalid response received: {dns_response}");
+    }
+
+    Ok(())
 }
