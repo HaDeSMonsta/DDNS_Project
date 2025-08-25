@@ -26,6 +26,7 @@ use {
     serde_json::json,
 };
 
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 const FORWARDED_HEADER: &str = "x-forwarded-for";
 const IP_CONF_PATH: LazyLock<String> =
     LazyLock::new(|| env::var("IP_CONF_PATH").unwrap_or_else(|_| String::from("/config/ip.conf")));
@@ -85,6 +86,11 @@ async fn main() -> Result<()> {
             .with_context(|| format!("Failed to set subscriber with lvl {lvl}"))?;
     }
 
+    #[cfg(any(feature = "post_netcup"))]
+    info!("Starting DDNS-Server v{VERSION} with \"post_netcup\"");
+    #[cfg(not(any(feature = "post_netcup")))]
+    info!("Starting DDNS-Server v{VERSION}");
+
     info!("Checking environment");
 
     let _ = *AUTH;
@@ -113,11 +119,6 @@ async fn main() -> Result<()> {
                 .with_context(|| format!("Error creating IP file {ip_path:?}"))?;
         }
     }
-
-    #[cfg(any(feature = "post_netcup"))]
-    info!("Post IP activated");
-    #[cfg(not(any(feature = "post_netcup")))]
-    info!("Post IP not activated");
 
     let listen_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
 
