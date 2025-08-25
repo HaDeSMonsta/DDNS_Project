@@ -1,0 +1,5 @@
+default:
+    @just --list
+
+post:
+    cargo run --features "post_netcup"

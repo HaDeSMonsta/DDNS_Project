@@ -1,5 +1,12 @@
 default:
 	@just --list
+
+up:
+	docker compose up -d --build
+
+down:
+	docker compose down
+
 release_server_t tag="latest":
 	clear
 	docker login

@@ -13,7 +13,6 @@ RUN cargo build --release --features post_netcup
 
 FROM debian:bookworm-slim
 RUN apt update
-RUN apt upgrade -y
 RUN apt install curl -y
 COPY --from=builder /app/target/release/ddns_server /usr/local/bin/ddns_server
 CMD ["ddns_server"]

@@ -1,32 +1,34 @@
 mod macros;
 
-#[cfg(feature = "post_netcup")]
-use anyhow::anyhow;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::post;
 use axum::{Json, Router};
 use dotenvy::dotenv;
-#[cfg(feature = "post_netcup")]
-use reqwest::Client;
 use serde::Deserialize;
-#[cfg(feature = "post_netcup")]
-use serde_json::json;
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::path::Path;
 use std::process::exit;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 use tokio::fs;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use tracing::{debug, error, info, warn, Level};
+use tracing::{Level, debug, error, info, trace, warn};
 use tracing_subscriber::FmtSubscriber;
+#[cfg(feature = "post_netcup")]
+use {
+    anyhow::{anyhow, bail},
+    reqwest::Client,
+    serde_json::json,
+};
 
 const FORWARDED_HEADER: &str = "x-forwarded-for";
-const IP_CONF_PATH: &str = "/config/ip.conf";
+const IP_CONF_PATH: LazyLock<String> =
+    LazyLock::new(|| env::var("IP_CONF_PATH").unwrap_or_else(|_| String::from("/config/ip.conf")));
 
 static AUTH: LazyLock<String> = LazyLock::new(|| get_env!("AUTH"));
 
@@ -50,7 +52,7 @@ struct AppState {
     rw_lock: Arc<Mutex<()>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct IpPayload {
     auth: String,
 }
@@ -62,7 +64,7 @@ async fn main() -> Result<()> {
     {
         const KEY: &str = "LOG_LEVEL";
         #[cfg(debug_assertions)]
-        pub const DEFAULT_LOG_LEVEL: Level = Level::DEBUG;
+        pub const DEFAULT_LOG_LEVEL: Level = Level::TRACE;
         #[cfg(not(debug_assertions))]
         pub const DEFAULT_LOG_LEVEL: Level = Level::INFO;
 
@@ -77,9 +79,7 @@ async fn main() -> Result<()> {
             Err(_) => DEFAULT_LOG_LEVEL,
         };
 
-        let fmt_sub = FmtSubscriber::builder()
-            .with_max_level(lvl)
-            .finish();
+        let fmt_sub = FmtSubscriber::builder().with_max_level(lvl).finish();
 
         tracing::subscriber::set_global_default(fmt_sub)
             .with_context(|| format!("Failed to set subscriber with lvl {lvl}"))?;
@@ -88,37 +88,40 @@ async fn main() -> Result<()> {
     info!("Checking environment");
 
     let _ = *AUTH;
+    let port = get_env!("PORT", u16);
+
+    // Create IP dir
+    {
+        let ip_path = IP_CONF_PATH.to_string();
+        let ip_path = Path::new(&ip_path);
+        if let Some(path) = ip_path.parent() {
+            debug!("IP path {path:?} does not exist, creating");
+            fs::create_dir_all(&path)
+                .await
+                .with_context(|| format!("Error creating IP path {path:?}"))?;
+        }
+        if !fs::try_exists(&ip_path)
+            .await
+            .with_context(|| format!("Unable to check if IP path {ip_path:?} exists"))?
+        {
+            fs::File::create(&ip_path)
+                .await
+                .with_context(|| format!("Error creating IP file {ip_path:?}"))?;
+        }
+    }
 
     #[cfg(any(feature = "post_netcup"))]
     info!("Post IP activated");
     #[cfg(not(any(feature = "post_netcup")))]
     info!("Post IP not activated");
 
-    match fs::try_exists(IP_CONF_PATH).await {
-        Ok(true) => debug!("IP Conf exists"),
-        Ok(false) => {
-            info!("{IP_CONF_PATH} does not exist, will create");
-            if let Err(e) = fs::File::create(IP_CONF_PATH).await {
-                error!("Unable to create {IP_CONF_PATH}: {e}");
-                exit(1);
-            };
-        }
-        Err(e) => {
-            error!("Can't check if {IP_CONF_PATH} exists: {e}");
-            exit(1);
-        }
-    }
-
-    let port = get_env!("PORT", u16);
     let listen_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
 
     let state = AppState {
         rw_lock: Arc::new(Mutex::new(())),
     };
 
-    let app = Router::new()
-        .route("/ip", post(post_ip))
-        .with_state(state);
+    let app = Router::new().route("/ip", post(post_ip)).with_state(state);
 
     let listener = TcpListener::bind(listen_address)
         .await
@@ -138,45 +141,62 @@ async fn post_ip(
     headers: HeaderMap,
     Json(payload): Json<IpPayload>,
 ) -> impl IntoResponse {
+    trace!(?payload, ?headers, "Hi");
     if payload.auth != *AUTH {
-        warn!("Invalid password detected: {}", payload.auth);
+        warn!("Invalid password detected: {:?}", payload.auth);
         tokio::time::sleep(Duration::from_secs(5)).await;
-        return (StatusCode::FORBIDDEN, String::from("No entrance with that password"));
+        return (
+            StatusCode::FORBIDDEN,
+            String::from("No entrance with that password"),
+        );
     }
 
     let client_ip = match headers.get(FORWARDED_HEADER) {
-        Some(ip) => ip,
+        Some(ip) => match ip.to_str() {
+            Ok(ip_str) => ip_str,
+            Err(e) => {
+                let err = format!("{FORWARDED_HEADER:?} is set, but can;t be parsed to str");
+                error!(?e, "{err}");
+                return (StatusCode::PRECONDITION_FAILED, err);
+            }
+        },
         None => {
             let err = format!("{FORWARDED_HEADER} is not set");
             error!("{err}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, err);
+            return (StatusCode::PRECONDITION_FAILED, err);
         }
     };
     debug!(?client_ip);
 
     let _guard = state.rw_lock.lock().await;
 
-    let ip = match fs::read_to_string(IP_CONF_PATH).await {
+    let stored_ip = match fs::read_to_string(&*IP_CONF_PATH).await {
         Ok(ip) => ip,
         Err(e) => {
-            error!("Can't read {IP_CONF_PATH}: {e}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, String::from("Can't read existing IP"));
-        }
-    };
-    let ip = ip.trim();
-
-    if client_ip != ip {
-        debug!("Client IP ({client_ip:?}) == ip ({ip})");
-        return (StatusCode::OK, format!("No change in IP: {ip}"));
-    }
-
-    match fs::write(IP_CONF_PATH, &ip).await {
-        Ok(_) => debug!("Wrote new ip {ip} to {IP_CONF_PATH}"),
-        Err(e) => {
-            error!("Unable to write IP {ip} to file {IP_CONF_PATH}");
+            error!("Can't read {IP_CONF_PATH:?}: {e}");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Can't write new IP {ip} to file: {e}"),
+                String::from("Can't read existing IP"),
+            );
+        }
+    };
+    let stored_ip = stored_ip.trim();
+
+    if client_ip == stored_ip {
+        debug!("Client IP {client_ip:?} == stored ip {stored_ip:?}");
+        return (StatusCode::OK, format!("No change in IP: {stored_ip:?}"));
+    }
+
+    match fs::write(&*IP_CONF_PATH, &client_ip).await {
+        Ok(_) => debug!("Wrote new ip {client_ip:?} to {IP_CONF_PATH:?}"),
+        Err(e) => {
+            error!(
+                ?e,
+                "Unable to write IP {client_ip:?} to file {IP_CONF_PATH:?}"
+            );
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Can't write new IP {client_ip:?} to file: {e}"),
             );
         }
     };
@@ -184,18 +204,24 @@ async fn post_ip(
     #[cfg(not(feature = "post_netcup"))]
     {
         debug!("Post IP deactivated");
-        return (StatusCode::OK, format!("New IP ({ip}) written (no post_ip detected)"));
+        return (StatusCode::OK, format!("New IP {client_ip:?} written"));
     }
 
     #[cfg(any(feature = "post_netcup"))]
-    match execute_ip_change(&ip).await {
+    match execute_ip_change(&client_ip).await {
         Ok(_) => {
             info!("Successfully posted new IP");
-            (StatusCode::OK, format!("New IP ({ip}) posted"))
+            (
+                StatusCode::OK,
+                format!("New IP {client_ip:?} written and posted"),
+            )
         }
         Err(e) => {
             error!("Post IP failed: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, String::from("Posting IP failed"))
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                String::from("Posting IP failed (write succeeded)"),
+            )
         }
     }
 }
@@ -212,16 +238,15 @@ async fn execute_ip_change(ip: &str) -> Result<()> {
         },
     });
 
-    let session_id = client.post(NC_URL)
-                           .json(&login_payload)
-                           .send()
-                           .await
-                           .context("Unable to login")?
+    let session_id = client
+        .post(NC_URL)
+        .json(&login_payload)
+        .send()
+        .await
+        .context("Unable to login")?
         .json::<serde_json::Value>()
         .await
-        .context("Unable to parse login response")?
-        ["responsedata"]
-        ["apisessionid"]
+        .context("Unable to parse login response")?["responsedata"]["apisessionid"]
         .as_str()
         .ok_or(anyhow!("No session id available"))?
         .to_string();
@@ -259,15 +284,15 @@ async fn execute_ip_change(ip: &str) -> Result<()> {
         },
     });
 
-    let dns_response = client.post(NC_URL)
-                             .json(&dns_payload)
-                             .send()
-                             .await
-                             .context("Unable to update dns")?
+    let dns_response = client
+        .post(NC_URL)
+        .json(&dns_payload)
+        .send()
+        .await
+        .context("Unable to update dns")?
         .json::<serde_json::Value>()
         .await
-        .context("Unable to parse dns response")?
-        ["shortmessage"]
+        .context("Unable to parse dns response")?["shortmessage"]
         .as_str()
         .ok_or(anyhow!("No shortmessage in dns response"))?
         .to_string();
