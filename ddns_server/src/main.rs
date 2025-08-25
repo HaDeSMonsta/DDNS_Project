@@ -17,7 +17,7 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-use tracing::{Level, debug, error, info, trace, warn};
+use tracing::{Level, debug, error, info, instrument, warn};
 use tracing_subscriber::FmtSubscriber;
 #[cfg(feature = "post_netcup")]
 use {
@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
     {
         const KEY: &str = "LOG_LEVEL";
         #[cfg(debug_assertions)]
-        pub const DEFAULT_LOG_LEVEL: Level = Level::TRACE;
+        pub const DEFAULT_LOG_LEVEL: Level = Level::DEBUG;
         #[cfg(not(debug_assertions))]
         pub const DEFAULT_LOG_LEVEL: Level = Level::INFO;
 
@@ -95,10 +95,14 @@ async fn main() -> Result<()> {
         let ip_path = IP_CONF_PATH.to_string();
         let ip_path = Path::new(&ip_path);
         if let Some(path) = ip_path.parent() {
-            debug!("IP path {path:?} does not exist, creating");
-            fs::create_dir_all(&path)
-                .await
-                .with_context(|| format!("Error creating IP path {path:?}"))?;
+            if !path.to_string_lossy().trim().is_empty() {
+                debug!("IP path {path:?} does not exist, creating");
+                fs::create_dir_all(&path)
+                    .await
+                    .with_context(|| format!("Error creating IP path {path:?}"))?;
+            } else {
+                debug!("Parent empty");
+            }
         }
         if !fs::try_exists(&ip_path)
             .await
@@ -135,13 +139,12 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-// Why tf does the order matter? If ConnectInfo/headers are below json, this won't compile
+#[instrument(skip(state), level = "trace")]
 async fn post_ip(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(payload): Json<IpPayload>,
 ) -> impl IntoResponse {
-    trace!(?payload, ?headers, "Hi");
     if payload.auth != *AUTH {
         warn!("Invalid password detected: {:?}", payload.auth);
         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -227,6 +230,7 @@ async fn post_ip(
 }
 
 #[cfg(feature = "post_netcup")]
+#[instrument]
 async fn execute_ip_change(ip: &str) -> Result<()> {
     let client = Client::new();
     let login_payload = json!({

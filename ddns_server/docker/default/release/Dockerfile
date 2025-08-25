@@ -12,6 +12,7 @@ COPY . .
 RUN cargo build --release
 
 FROM debian:bookworm-slim
+LABEL org.opencontainers.image.source=https://github.com/HaDeSMonsta/DDNS_Project
 RUN apt update
 RUN apt upgrade -y
 RUN apt install curl -y

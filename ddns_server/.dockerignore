@@ -1,8 +1,11 @@
 .idea/
+.zed/
 docker/
 .dockerignore
 *.env*
 .gitignore
-Cargo.lock
+justfile
 ip.conf
 README.md
+*.sh
+rustfmt.toml

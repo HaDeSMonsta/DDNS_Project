@@ -12,6 +12,7 @@ COPY . .
 RUN cargo build --release --features post_netcup
 
 FROM debian:bookworm-slim
+LABEL org.opencontainers.image.source=https://github.com/HaDeSMonsta/DDNS_Project
 RUN apt update
 RUN apt install curl -y
 COPY --from=builder /app/target/release/ddns_server /usr/local/bin/ddns_server
