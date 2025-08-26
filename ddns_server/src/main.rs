@@ -14,11 +14,12 @@ use std::path::Path;
 use std::process::exit;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
-use tokio::fs;
 use tokio::net::TcpListener;
+use tokio::signal::unix::signal;
 use tokio::sync::Mutex;
 #[cfg(any(feature = "post_netcup"))]
 use tokio::sync::RwLock;
+use tokio::{fs, select, signal};
 use tracing::{Level, debug, error, info, instrument, warn};
 use tracing_subscriber::FmtSubscriber;
 #[cfg(feature = "post_netcup")]
@@ -29,7 +30,7 @@ use {
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
-const FORWARDED_HEADER: &str = "x-forwarded-for";
+const FORWARDED_HEADER: &str = "x-forwarded-for"; // TODO Add trusted host
 const IP_CONF_PATH: LazyLock<String> =
     LazyLock::new(|| env::var("IP_CONF_PATH").unwrap_or_else(|_| String::from("/config/ip.conf")));
 
@@ -120,10 +121,42 @@ async fn main() -> Result<()> {
     info!("Listening on {listen_address}");
 
     axum::serve(listener, app)
+        .with_graceful_shutdown(await_shutdown_signal())
         .await
         .context("Unable to serve")?;
 
     Ok(())
+}
+
+#[instrument]
+async fn await_shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(e) = signal::ctrl_c().await {
+            error!(?e, "Error while waiting for ctrl-c");
+        };
+    };
+
+    #[cfg(unix)]
+    let docker_shutdown = async {
+        use tokio::signal::unix::SignalKind;
+
+        match signal(SignalKind::terminate()) {
+            Ok(mut sig) => {
+                if let None = sig.recv().await {
+                    error!("Cannot receive signals for sigterm anymore");
+                }
+            }
+            Err(e) => error!(?e, "Cannot initialize sigterm listener"),
+        }
+    };
+
+    #[cfg(not(unix))]
+    let docker_shutdown = std::future::Pending;
+
+    select! {
+        _ = ctrl_c => info!("Ctrl-c received"),
+        _ = docker_shutdown => info!("Docker shutdown (sigterm) received"),
+    }
 }
 
 #[instrument]
