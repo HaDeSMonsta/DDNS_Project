@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
     info!("Checking environment");
 
     let _ = *AUTH;
-    let port = get_env!("PORT", u16);
+    let port = get_env!("PORT", "8080", u16);
 
     create_ip_file().await.context("Unable to create ip file")?;
 
