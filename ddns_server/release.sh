@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-set -x
-set -euo pipefail
+set -euxo pipefail
 
 major="$1"
 minor="$2"
