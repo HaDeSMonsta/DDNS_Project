@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use axum::routing::post;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use dotenvy::dotenv;
 use serde::Deserialize;
@@ -17,6 +17,8 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
+#[cfg(any(feature = "post_netcup"))]
+use tokio::sync::RwLock;
 use tracing::{Level, debug, error, info, instrument, warn};
 use tracing_subscriber::FmtSubscriber;
 #[cfg(feature = "post_netcup")]
@@ -32,6 +34,9 @@ const IP_CONF_PATH: LazyLock<String> =
     LazyLock::new(|| env::var("IP_CONF_PATH").unwrap_or_else(|_| String::from("/config/ip.conf")));
 
 static AUTH: LazyLock<String> = LazyLock::new(|| get_env!("AUTH"));
+
+#[cfg(any(feature = "post_netcup"))]
+static POST_HEALTHY: LazyLock<RwLock<bool>> = LazyLock::new(|| RwLock::new(true));
 
 #[cfg(feature = "post_netcup")]
 const NC_URL: &str = "https://ccp.netcup.net/run/webservice/servers/endpoint.php?JSON";
@@ -50,7 +55,7 @@ static NC_AT_ID: LazyLock<String> = LazyLock::new(|| get_env!("NC_AT_ID"));
 
 #[derive(Clone)]
 struct AppState {
-    rw_lock: Arc<Mutex<()>>,
+    ip_file_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -101,10 +106,13 @@ async fn main() -> Result<()> {
     let listen_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
 
     let state = AppState {
-        rw_lock: Arc::new(Mutex::new(())),
+        ip_file_lock: Arc::new(Mutex::new(())),
     };
 
-    let app = Router::new().route("/ip", post(post_ip)).with_state(state);
+    let app = Router::new()
+        .route("/ip", post(post_ip))
+        .route("/health", get(healthcheck))
+        .with_state(state);
 
     let listener = TcpListener::bind(listen_address)
         .await
@@ -116,6 +124,36 @@ async fn main() -> Result<()> {
         .context("Unable to serve")?;
 
     Ok(())
+}
+
+#[instrument]
+async fn healthcheck() -> impl IntoResponse {
+    debug!("Starting");
+    match fs::try_exists(&*IP_CONF_PATH).await {
+        Ok(true) => debug!("Can confirm, {:?} exists", IP_CONF_PATH.as_str()),
+        Ok(false) => {
+            warn!("{:?} does not exist, failing", IP_CONF_PATH.as_str());
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+        Err(e) => {
+            warn!(
+                "Error checking if {:?} exists, failing: {e:?}",
+                IP_CONF_PATH.as_str()
+            );
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    }
+
+    #[cfg(any(feature = "post_netcup"))]
+    {
+        let guard = POST_HEALTHY.read().await;
+        if !*guard {
+            warn!("Last execution of ip change failed");
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    }
+
+    StatusCode::OK
 }
 
 async fn create_ip_file() -> Result<()> {
@@ -174,7 +212,7 @@ async fn post_ip(
     };
     debug!(?client_ip);
 
-    let _guard = state.rw_lock.lock().await;
+    let _guard = state.ip_file_lock.lock().await;
 
     let stored_ip = {
         const IP_ERR_MSG: &str = "Can't read existing IP";
@@ -251,6 +289,8 @@ async fn post_ip(
     match execute_ip_change(&client_ip).await {
         Ok(_) => {
             info!("Successfully posted new IP");
+            let mut guard = POST_HEALTHY.write().await;
+            *guard = true;
             (
                 StatusCode::OK,
                 format!("New IP {client_ip:?} written and posted"),
@@ -258,6 +298,8 @@ async fn post_ip(
         }
         Err(e) => {
             error!("Post IP failed: {e}");
+            let mut guard = POST_HEALTHY.write().await;
+            *guard = false;
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 String::from("Posting IP failed (write succeeded)"),
