@@ -96,29 +96,7 @@ async fn main() -> Result<()> {
     let _ = *AUTH;
     let port = get_env!("PORT", u16);
 
-    // Create IP dir
-    {
-        let ip_path = IP_CONF_PATH.to_string();
-        let ip_path = Path::new(&ip_path);
-        if let Some(path) = ip_path.parent() {
-            if !path.to_string_lossy().trim().is_empty() {
-                debug!("IP path {path:?} does not exist, creating");
-                fs::create_dir_all(&path)
-                    .await
-                    .with_context(|| format!("Error creating IP path {path:?}"))?;
-            } else {
-                debug!("Parent empty");
-            }
-        }
-        if !fs::try_exists(&ip_path)
-            .await
-            .with_context(|| format!("Unable to check if IP path {ip_path:?} exists"))?
-        {
-            fs::File::create(&ip_path)
-                .await
-                .with_context(|| format!("Error creating IP file {ip_path:?}"))?;
-        }
-    }
+    create_ip_file().await.context("Unable to create ip file")?;
 
     let listen_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), port);
 
@@ -137,6 +115,30 @@ async fn main() -> Result<()> {
         .await
         .context("Unable to serve")?;
 
+    Ok(())
+}
+
+async fn create_ip_file() -> Result<()> {
+    let ip_path = IP_CONF_PATH.to_string();
+    let ip_path = Path::new(&ip_path);
+    if let Some(path) = ip_path.parent() {
+        if !path.to_string_lossy().trim().is_empty() {
+            debug!("IP path {path:?} does not exist, creating");
+            fs::create_dir_all(&path)
+                .await
+                .with_context(|| format!("Error creating IP path {path:?}"))?;
+        } else {
+            debug!("Parent empty");
+        }
+    }
+    if !fs::try_exists(&ip_path)
+        .await
+        .with_context(|| format!("Unable to check if IP path {ip_path:?} exists"))?
+    {
+        fs::File::create(&ip_path)
+            .await
+            .with_context(|| format!("Error creating IP file {ip_path:?}"))?;
+    }
     Ok(())
 }
 
@@ -159,14 +161,14 @@ async fn post_ip(
         Some(ip) => match ip.to_str() {
             Ok(ip_str) => ip_str,
             Err(e) => {
-                let err = format!("{FORWARDED_HEADER:?} is set, but can;t be parsed to str");
+                let err = format!("{FORWARDED_HEADER:?} is set, but can't be parsed to str");
                 error!(?e, "{err}");
                 return (StatusCode::PRECONDITION_FAILED, err);
             }
         },
         None => {
             let err = format!("{FORWARDED_HEADER} is not set");
-            error!("{err}");
+            warn!("{err}");
             return (StatusCode::PRECONDITION_FAILED, err);
         }
     };
@@ -174,17 +176,50 @@ async fn post_ip(
 
     let _guard = state.rw_lock.lock().await;
 
-    let stored_ip = match fs::read_to_string(&*IP_CONF_PATH).await {
-        Ok(ip) => ip,
-        Err(e) => {
-            error!("Can't read {IP_CONF_PATH:?}: {e}");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                String::from("Can't read existing IP"),
-            );
+    let stored_ip = {
+        const IP_ERR_MSG: &str = "Can't read existing IP";
+        let mut attempt = 0u8;
+        loop {
+            match fs::read_to_string(&*IP_CONF_PATH).await {
+                Ok(ip) => break ip,
+                Err(e) => {
+                    warn!("Can't read {:?}: {e:?}", IP_CONF_PATH.as_str());
+
+                    match fs::try_exists(&*IP_CONF_PATH).await {
+                        Ok(true) => error!("File exists, but we cannot read"),
+                        Ok(false) if attempt == 0 => {
+                            attempt += 1;
+                            warn!(
+                                "{:?} does not exist, creating again...",
+                                IP_CONF_PATH.as_str()
+                            );
+                            match create_ip_file().await {
+                                Ok(_) => {
+                                    info!("Recreated {:?}, retrying...", IP_CONF_PATH.as_str());
+                                    continue;
+                                }
+                                Err(e) => {
+                                    error!("Failed to recreate {:?}: {e:?}", IP_CONF_PATH.as_str())
+                                }
+                            }
+                        }
+                        Ok(false) => {
+                            error!(
+                                "Second try and {:?} still doesn't exist",
+                                IP_CONF_PATH.as_str()
+                            )
+                        }
+                        Err(e) => error!(
+                            "Somehow, we cannot even check if {:?} exists: {e:?}",
+                            IP_CONF_PATH.as_str()
+                        ),
+                    }
+
+                    return (StatusCode::INTERNAL_SERVER_ERROR, String::from(IP_ERR_MSG));
+                }
+            };
         }
     };
-    let stored_ip = stored_ip.trim();
 
     if client_ip == stored_ip {
         debug!("Client IP {client_ip:?} == stored ip {stored_ip:?}");
@@ -192,15 +227,16 @@ async fn post_ip(
     }
 
     match fs::write(&*IP_CONF_PATH, &client_ip).await {
-        Ok(_) => debug!("Wrote new ip {client_ip:?} to {IP_CONF_PATH:?}"),
+        Ok(_) => debug!("Wrote new ip {client_ip:?} to {:?}", IP_CONF_PATH.as_str()),
         Err(e) => {
             error!(
                 ?e,
-                "Unable to write IP {client_ip:?} to file {IP_CONF_PATH:?}"
+                "Unable to write IP {client_ip:?} to file {:?}",
+                IP_CONF_PATH.as_str()
             );
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Can't write new IP {client_ip:?} to file: {e}"),
+                format!("Can't write new IP {client_ip:?} to file"),
             );
         }
     };

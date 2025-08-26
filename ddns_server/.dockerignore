@@ -1,6 +1,7 @@
 .idea/
 .zed/
 docker/
+target/
 .dockerignore
 *.env*
 .gitignore
