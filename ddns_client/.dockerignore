@@ -1,6 +1,7 @@
-.git/
-.gitignore
 .idea/
 target/
+.dockerignore
 *.env*
+.gitignore
+Dockerfile
 README.md

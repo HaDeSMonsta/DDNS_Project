@@ -1,79 +1,82 @@
-use std::{env, thread};
-use std::io::{ErrorKind, Read, Write};
-use std::net::TcpStream;
-use std::time::{Duration, Instant};
+mod macros;
 
-use tracing::{debug, info, Level};
+use std::{sync::LazyLock, time::Duration};
+
+use anyhow::{Context, Result, bail};
+use dotenvy::dotenv;
+use reqwest::Client;
+use serde_json::json;
+use tracing::{Level, debug, info, instrument, warn};
 use tracing_subscriber::FmtSubscriber;
 
-fn main() {
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+const DEFAULT_SLEEP_MINS: &str = "15";
+static SLEEP_SECS: LazyLock<u64> =
+    LazyLock::new(|| get_env!("SLEEP_MINS", DEFAULT_SLEEP_MINS, u64) * 60);
+static SLEEP_MINS: LazyLock<u64> =
+    LazyLock::new(|| get_env!("SLEEP_MINS", DEFAULT_SLEEP_MINS, u64));
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let _ = dotenv();
     {
         #[cfg(debug_assertions)]
         let level = Level::DEBUG;
         #[cfg(not(debug_assertions))]
         let level = Level::INFO;
         tracing::subscriber::set_global_default(
-            FmtSubscriber::builder()
-                .with_max_level(level)
-                .finish()
-        ).expect("Setting global default subscriber failed");
+            FmtSubscriber::builder().with_max_level(level).finish(),
+        )
+        .expect("Setting global default subscriber failed");
     }
 
-    info!("Checking environment");
+    info!("Starting DDNS-Client v{VERSION}");
 
-    let server_address = env::var("SERVER_ADDRESS")
-        .expect("SERVER_ADDRESS must be set");
-    let sleep_mins: u64 = env::var("SLEEP_MINS")
-        .unwrap_or(String::from("15"))
-        .parse()
-        .expect("SLEEP_MINS should be convertable to u64");
-    assert_ne!(sleep_mins, 0, "SLEEP_MINS must be > 0");
+    let server_address = get_env!("SERVER_ADDRESS");
+    if *SLEEP_SECS == 0 {
+        bail!("Sleep mins must be > 0");
+    }
+    info!("Delta between calls: {} mins", *SLEEP_MINS);
 
-    let auth = env::var("AUTH")
-        .expect("AUTH must be set");
+    let auth = get_env!("AUTH");
 
-    info!("Target address: {server_address}");
+    info!("Target address: {server_address:?}");
 
     loop {
-        {
-            info!("Connecting to server");
-            let mut stream = TcpStream::connect(&server_address)
-                .expect("Failed to connect to server");
-            stream.set_nonblocking(true)
-                  .expect("Failed to set non-blocking");
-
-            debug!("Authenticating");
-
-            stream.write_all(format!("{auth}\n").as_bytes())
-                  .expect("Unable to write to server");
-
-            let mut tmp_buf = [0; 1024];
-            let mut buffer = vec![];
-
-            let start = Instant::now();
-            'outer: loop {
-                if start.elapsed().as_secs() > 50 { panic!("Timeout"); }
-                match stream.read(&mut tmp_buf) {
-                    Ok(n) => {
-                        debug!("Read {n} bytes");
-
-                        for byte in &tmp_buf[..n] {
-                            if *byte == b'\n' {
-                                debug!("Reached end of response");
-                                break 'outer;
-                            }
-                            buffer.push(*byte);
-                        }
-                    }
-                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => continue,
-                    Err(e) => panic!("Failed to read from server: {e}"),
-                }
-            }
-
-            let res = String::from_utf8_lossy(&buffer);
-            info!("Response from server: {res}");
-        }
-        info!("Sleeping for {sleep_mins} minutes");
-        thread::sleep(Duration::from_secs(sleep_mins * 60));
+        mk_call(&server_address, &auth)
+            .await
+            .context("Failed to call Server")?;
+        debug!("Sleeping for {} mins", *SLEEP_MINS);
+        tokio::time::sleep(Duration::from_secs(*SLEEP_SECS)).await;
     }
+}
+
+#[instrument(skip(auth))]
+async fn mk_call(target_url: &str, auth: &str) -> Result<()> {
+    let client = Client::new();
+    debug!("Created client");
+    let payload = json!({"auth": &auth,});
+    debug!("Created payload");
+
+    let resp = client
+        .post(target_url)
+        .header("x-forwarded-for", "127.0.0.1")
+        .json(&payload)
+        .send()
+        .await
+        .context("Failed to send request")?;
+
+    let resp_status = resp.status();
+    let resp_text = resp
+        .text()
+        .await
+        .context("Unablte to extract text from resp")?;
+
+    if resp_status == 200 {
+        info!("Call succeeded: {resp_text}");
+    } else {
+        warn!("Status != 200: {resp_status}; Msg: {resp_text}");
+    }
+
+    Ok(())
 }
