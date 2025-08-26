@@ -51,7 +51,7 @@ async fn main() -> Result<()> {
     }
 }
 
-#[instrument(skip(auth))]
+#[instrument(skip(auth), level = "debug")]
 async fn mk_call(target_url: &str, auth: &str) -> Result<()> {
     let client = Client::new();
     debug!("Created client");
