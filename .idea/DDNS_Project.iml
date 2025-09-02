@@ -5,6 +5,9 @@
       <sourceFolder url="file://$MODULE_DIR$/ddns_client/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/ddns_macros/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/ddns_server/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/ddns-client/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/ddns-macros/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/ddns-server/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/ddns_client/target" />
       <excludeFolder url="file://$MODULE_DIR$/ddns_server/target" />
       <excludeFolder url="file://$MODULE_DIR$/target" />

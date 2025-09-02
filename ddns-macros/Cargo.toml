@@ -1,5 +1,5 @@
 [package]
-name = "ddns_macros"
+name = "ddns-macros"
 version.workspace = true
 edition.workspace = true
 

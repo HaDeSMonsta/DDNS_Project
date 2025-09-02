@@ -1,5 +1,5 @@
 [package]
-name = "ddns_server"
+name = "ddns-server"
 version.workspace = true
 edition.workspace = true
 
@@ -18,4 +18,4 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "sign
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
-ddns_macros = { workspace = true }
+ddns-macros = { workspace = true }

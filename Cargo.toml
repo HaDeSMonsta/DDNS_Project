@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["ddns_client", "ddns_macros", "ddns_server"]
+members = ["ddns-client", "ddns-macros", "ddns-server"]
 
 [workspace.package]
 version = "1.0.5"
@@ -23,4 +23,4 @@ tokio = "1.47.1"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
 
-ddns_macros = { path = "ddns_macros" }
+ddns-macros = { path = "ddns-macros" }

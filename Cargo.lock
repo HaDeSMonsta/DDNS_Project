@@ -176,11 +176,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
-name = "ddns_client"
+name = "ddns-client"
 version = "1.0.5"
 dependencies = [
  "color-eyre",
- "ddns_macros",
+ "ddns-macros",
  "dotenvy",
  "reqwest",
  "serde",
@@ -191,16 +191,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "ddns_macros"
+name = "ddns-macros"
 version = "1.0.5"
 
 [[package]]
-name = "ddns_server"
+name = "ddns-server"
 version = "1.0.5"
 dependencies = [
  "axum",
  "color-eyre",
- "ddns_macros",
+ "ddns-macros",
  "dotenvy",
  "reqwest",
  "serde",
