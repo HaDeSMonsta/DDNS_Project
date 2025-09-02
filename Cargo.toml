@@ -13,8 +13,8 @@ panic = "abort"
 strip = true
 
 [workspace.dependencies]
-anyhow = "1.0.99"
 axum = "0.8.4"
+color-eyre = "0.6.5"
 dotenvy = "0.15.7"
 reqwest = "0.12.23"
 serde = "1.0.219"

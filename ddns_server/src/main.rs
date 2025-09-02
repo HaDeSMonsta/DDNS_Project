@@ -1,6 +1,7 @@
 mod macros;
 
-use anyhow::{Context, Result};
+use color_eyre::Result;
+use color_eyre::eyre::Context;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
@@ -24,7 +25,7 @@ use tracing::{Level, debug, error, info, instrument, warn};
 use tracing_subscriber::FmtSubscriber;
 #[cfg(feature = "post_netcup")]
 use {
-    anyhow::{anyhow, bail},
+    color_eyre::eyre::{anyhow, bail},
     reqwest::Client,
     serde_json::json,
 };

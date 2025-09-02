@@ -1,8 +1,8 @@
 mod macros;
 
 use std::{sync::LazyLock, time::Duration};
-
-use anyhow::{Context, Result, bail};
+use color_eyre::eyre::{bail, Context};
+use color_eyre::Result;
 use dotenvy::dotenv;
 use reqwest::Client;
 use serde_json::json;

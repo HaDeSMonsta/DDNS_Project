@@ -8,8 +8,8 @@ default = []
 post_netcup = ["serde_json", "reqwest"]
 
 [dependencies]
-anyhow = { workspace = true }
 axum = { workspace = true }
+color-eyre = { workspace = true }
 dotenvy = { workspace = true }
 reqwest = { workspace = true, features = ["json"], optional = true }
 serde = { workspace = true, features = ["derive"] }
