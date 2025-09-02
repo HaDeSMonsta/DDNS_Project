@@ -1,11 +1,10 @@
-mod macros;
-
-use std::{sync::LazyLock, time::Duration};
-use color_eyre::eyre::{bail, Context};
 use color_eyre::Result;
+use color_eyre::eyre::{Context, bail};
+use ddns_macros::get_env;
 use dotenvy::dotenv;
 use reqwest::Client;
 use serde_json::json;
+use std::{sync::LazyLock, time::Duration};
 use tracing::{Level, debug, info, instrument, warn};
 use tracing_subscriber::FmtSubscriber;
 

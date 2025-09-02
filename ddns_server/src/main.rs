@@ -1,12 +1,11 @@
-mod macros;
-
-use color_eyre::Result;
-use color_eyre::eyre::Context;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use color_eyre::Result;
+use color_eyre::eyre::Context;
+use ddns_macros::get_env;
 use dotenvy::dotenv;
 use serde::Deserialize;
 use std::env;

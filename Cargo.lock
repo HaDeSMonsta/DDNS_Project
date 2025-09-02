@@ -180,6 +180,7 @@ name = "ddns_client"
 version = "1.0.5"
 dependencies = [
  "color-eyre",
+ "ddns_macros",
  "dotenvy",
  "reqwest",
  "serde",
@@ -190,11 +191,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ddns_macros"
+version = "1.0.5"
+
+[[package]]
 name = "ddns_server"
 version = "1.0.5"
 dependencies = [
  "axum",
  "color-eyre",
+ "ddns_macros",
  "dotenvy",
  "reqwest",
  "serde",
