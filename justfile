@@ -1,18 +1,28 @@
+set dotenv-filename := "just.env"
+
 default:
 	@just --list
 
-up:
-	docker compose up -d --build
+client:
+	cargo run --bin ddns_client
 
-down:
-	docker compose down
+server:
+	cargo run --bin ddns_server
 
-release_server_t tag="latest":
-	clear
-	docker login
-	docker build -t "hadesmonsta/ddns_server:{{tag}}" -f ./ddns_server/docker/nc/release/Dockerfile ./ddns_server
-	docker push "hadesmonsta/ddns_server:{{tag}}"
-release_server tag:
-	clear
-	just release_server_t "{{tag}}"
-	just release_server_t
+publish major minor patch:
+    docker logout
+    echo "$CR_PAT" | docker login ghcr.io -u "$CR_USERNAME" --password-stdin
+
+    docker build ./ddns_client/ -f ./ddns_client/Dockerfile -t "ghcr.io/hadesmonsta/ddns_project:client-v{{major}}.{{minor}}.{{patch}}"
+
+    docker tag "ghcr.io/hadesmonsta/ddns_project:client-v{{major}}.{{minor}}.{{patch}}" "ghcr.io/hadesmonsta/ddns_project:client-v{{major}}.{{minor}}"
+    docker tag "ghcr.io/hadesmonsta/ddns_project:client-v{{major}}.{{minor}}.{{patch}}" "ghcr.io/hadesmonsta/ddns_project:client-v{{major}}"
+    docker tag "ghcr.io/hadesmonsta/ddns_project:client-v{{major}}.{{minor}}.{{patch}}" "ghcr.io/hadesmonsta/ddns_project:client-latest"
+
+    docker push "ghcr.io/hadesmonsta/ddns_project:client-v{{major}}.{{minor}}.{{patch}}"
+    docker push "ghcr.io/hadesmonsta/ddns_project:client-v{{major}}.{{minor}}"
+    docker push "ghcr.io/hadesmonsta/ddns_project:client-v{{major}}"
+    docker push "ghcr.io/hadesmonsta/ddns_project:client-latest"
+
+    docker logout
+    ./release_server.sh {{major}} {{minor}} {{patch}}

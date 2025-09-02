@@ -1,28 +1,19 @@
 [package]
 name = "ddns_server"
-version = "1.0.4"
-edition = "2024"
-
-[profile.release]
-lto = true
-codegen-units = 1
+version.workspace = true
+edition.workspace = true
 
 [features]
 default = []
 post_netcup = ["serde_json", "reqwest"]
 
 [dependencies]
-tracing = "0.1.41"
-tracing-subscriber = "0.3.19"
-dotenvy = "0.15.7"
-anyhow = "1.0.99"
-axum = "0.8.4"
-tokio = { version = "1.47.1", features = [
-    "macros",
-    "rt-multi-thread",
-    "fs",
-    "signal",
-] }
-serde = { version = "1.0.219", features = ["derive"] }
-serde_json = { version = "1.0.143", optional = true }
-reqwest = { version = "0.12.23", features = ["json"], optional = true }
+anyhow = { workspace = true }
+axum = { workspace = true }
+dotenvy = { workspace = true }
+reqwest = { workspace = true, features = ["json"], optional = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, optional = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "fs", "signal"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
