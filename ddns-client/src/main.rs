@@ -9,11 +9,11 @@ use tracing::{Level, debug, info, instrument, warn};
 use tracing_subscriber::FmtSubscriber;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 const DEFAULT_SLEEP_MINS: &str = "15";
-static SLEEP_SECS: LazyLock<u64> =
-    LazyLock::new(|| get_env!("SLEEP_MINS", DEFAULT_SLEEP_MINS, u64) * 60);
 static SLEEP_MINS: LazyLock<u64> =
     LazyLock::new(|| get_env!("SLEEP_MINS", DEFAULT_SLEEP_MINS, u64));
+static SLEEP_SECS: LazyLock<u64> = LazyLock::new(|| *SLEEP_MINS * 60);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -32,6 +32,7 @@ async fn main() -> Result<()> {
     info!("Starting DDNS-Client v{VERSION}");
 
     let server_address = get_env!("SERVER_ADDRESS");
+    debug!(sleep_secs = *SLEEP_SECS);
     if *SLEEP_SECS == 0 {
         bail!("Sleep mins must be > 0");
     }
