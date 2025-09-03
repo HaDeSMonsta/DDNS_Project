@@ -69,7 +69,7 @@ async fn mk_call(target_url: &str, auth: &str) -> Result<()> {
     let resp_text = resp
         .text()
         .await
-        .context("Unablte to extract text from resp")?;
+        .context("Unable to extract text from resp")?;
 
     if resp_status == 200 {
         info!("Call succeeded: {resp_text}");
