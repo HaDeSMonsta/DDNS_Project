@@ -1,0 +1,7 @@
+procs:
+  client:
+    shell: "docker build ./ -f docker/client/Dockerfile -t \"ghcr.io/hadesmonsta/ddns_project:client-latest\""
+  server_default:
+    shell: "docker build ./ -f docker/server/Dockerfile -t \"ghcr.io/hadesmonsta/ddns_project:server-latest\""
+  server_netcup:
+    shell: "docker build ./ -f docker/server/netcup/Dockerfile -t \"ghcr.io/hadesmonsta/ddns_project:server-netcup-latest\""

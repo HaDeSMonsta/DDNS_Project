@@ -7,13 +7,14 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --recipe-path recipe.json --features post_netcup
+RUN cargo chef cook --recipe-path recipe.json --release --bin ddns-server
 COPY . .
-RUN cargo build --features post_netcup
+RUN cargo build --release --bin ddns-server
 
 FROM debian:bookworm-slim
+LABEL org.opencontainers.image.source=https://github.com/HaDeSMonsta/DDNS_Project
 RUN apt update
 RUN apt upgrade -y
 RUN apt install curl -y
-COPY --from=builder /app/target/debug/ddns_server /usr/local/bin/ddns_server
-CMD ["ddns_server"]
+COPY --from=builder /app/target/release/ddns-server /usr/local/bin/ddns-server
+CMD ["ddns-server"]

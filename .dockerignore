@@ -1,0 +1,15 @@
+.git/
+.idea/
+docker/
+target/
+
+.*ignore
+*.env*
+docker-compose.yaml
+justfile
+LICENSE*
+*.md
+*.sh
+rustfmt.toml
+*.nix
+*.conf
