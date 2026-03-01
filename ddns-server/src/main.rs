@@ -7,6 +7,7 @@ use color_eyre::Result;
 use color_eyre::eyre::Context;
 use ddns_macros::get_env;
 use dotenvy::dotenv;
+use reqwest::Client;
 use serde::Deserialize;
 use std::env;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -25,7 +26,6 @@ use tracing_subscriber::FmtSubscriber;
 #[cfg(feature = "post_netcup")]
 use {
     color_eyre::eyre::{anyhow, bail},
-    reqwest::Client,
     serde_json::json,
 };
 
@@ -53,6 +53,8 @@ static NC_DOMAIN_NAME: LazyLock<String> = LazyLock::new(|| get_env!("NC_DOMAIN_N
 static NC_STAR_ID: LazyLock<String> = LazyLock::new(|| get_env!("NC_STAR_ID"));
 #[cfg(feature = "post_netcup")]
 static NC_AT_ID: LazyLock<String> = LazyLock::new(|| get_env!("NC_AT_ID"));
+
+static NTFY_URL: LazyLock<Option<String>> = LazyLock::new(|| env::var("NTFY_URL").ok());
 
 #[derive(Clone)]
 struct AppState {
@@ -312,6 +314,10 @@ async fn post_ip(
         }
     };
 
+    if let Err(e) = ntfy(&stored_ip, &client_ip).await {
+        warn!(?e, "failed to send ntfy notification"); // We should still post the new IP
+    }
+
     #[cfg(not(feature = "post_netcup"))]
     {
         debug!("Post IP deactivated");
@@ -416,6 +422,26 @@ async fn execute_ip_change(ip: &str) -> Result<()> {
     if dns_response.trim() != "DNS records successful updated" {
         bail!("Invalid response received: {dns_response}");
     }
+
+    Ok(())
+}
+
+#[instrument(skip_all)]
+async fn ntfy(old_ip: &str, new_ip: &str) -> Result<()> {
+    let Some(ntfy_url) = &*NTFY_URL else {
+        return Ok(());
+    };
+
+    let msg = format!("IP changed; {old_ip} -> {new_ip}");
+
+    debug!("Sending ntfy notification");
+    let client = Client::new();
+    client
+        .post(ntfy_url)
+        .body(msg)
+        .send()
+        .await
+        .context("Unable to send ntfy notification")?;
 
     Ok(())
 }
