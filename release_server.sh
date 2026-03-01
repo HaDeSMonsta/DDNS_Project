@@ -8,9 +8,10 @@ patch="$3"
 docker logout
 echo "$CR_PAT" | docker login ghcr.io -u "$CR_USERNAME" --password-stdin
 
-docker build ./ -f docker/client/Dockerfile -t "ghcr.io/hadesmonsta/ddns_project:client-latest"
-docker build ./ -f docker/server/Dockerfile -t "ghcr.io/hadesmonsta/ddns_project:server-latest"
-docker build ./ -f docker/server/netcup/Dockerfile -t "ghcr.io/hadesmonsta/ddns_project:server-netcup-latest"
+# Via mprocs in justfile
+#docker build ./ -f docker/client/Dockerfile -t "ghcr.io/hadesmonsta/ddns_project:client-latest"
+#docker build ./ -f docker/server/Dockerfile -t "ghcr.io/hadesmonsta/ddns_project:server-latest"
+#docker build ./ -f docker/server/netcup/Dockerfile -t "ghcr.io/hadesmonsta/ddns_project:server-netcup-latest"
 
 ##############
 ### CLIENT ###
