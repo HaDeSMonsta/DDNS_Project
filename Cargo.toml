@@ -3,7 +3,7 @@ resolver = "3"
 members = ["ddns-client", "ddns-macros", "ddns-server"]
 
 [workspace.package]
-version = "1.0.5"
+version = "1.1.0"
 edition = "2024"
 
 [profile.release]
