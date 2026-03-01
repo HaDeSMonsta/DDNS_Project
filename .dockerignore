@@ -13,3 +13,4 @@ LICENSE*
 rustfmt.toml
 *.nix
 *.conf
+*.log
