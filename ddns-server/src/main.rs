@@ -192,16 +192,14 @@ async fn healthcheck() -> impl IntoResponse {
 }
 
 async fn create_ip_file() -> Result<()> {
-    let ip_path = IP_CONF_PATH.to_string();
+    let ip_path = &*IP_CONF_PATH;
     let ip_path = Path::new(&ip_path);
     if let Some(path) = ip_path.parent() {
-        if !path.to_string_lossy().trim().is_empty() {
+        if !path.exists() {
             debug!("IP path {path:?} does not exist, creating");
             fs::create_dir_all(&path)
                 .await
                 .with_context(|| format!("Error creating IP path {path:?}"))?;
-        } else {
-            debug!("Parent empty");
         }
     }
     if !fs::try_exists(&ip_path)
